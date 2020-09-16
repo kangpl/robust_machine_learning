@@ -13,6 +13,7 @@ import torchvision.transforms as transforms
 from torch.utils.tensorboard import SummaryWriter
 
 from models.resnet import ResNet18
+from models.preact_resnet import PreActResNet18
 from utils.util import progress_bar
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
@@ -20,9 +21,10 @@ parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 parser.add_argument('--batch_size', '-b', default=128, type=int, help='mini-batch size')
 parser.add_argument('--num_epochs', default=200, type=int)
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
-parser.add_argument('--checkpoint', '-c', default='./checkpoint/ckpt.pth', type=str,  help='path to save checkpoint ('
+parser.add_argument('--checkpoint', '-c', default='./checkpoint', type=str,  help='path to save checkpoint ('
                                                                                            'default: checkpoint)')
 parser.add_argument('--tensorboard', '-t', default='./tensorboard', type=str, help='log directory of tensorboard')
+parser.add_argument('--model', '-m', default='PreActResNet18', type=str)
 args = parser.parse_args()
 
 writer = SummaryWriter(args.tensorboard)
@@ -62,7 +64,15 @@ if torch.cuda.is_available():
     print("GPU is available and trained on GPU")
 
 print('==> Building model..')
-net = ResNet18()
+if args.model == 'ResNet18':
+    net = ResNet18()
+    print("The model used is ResNet18")
+elif args.model == 'PreActResNet18':
+    net = PreActResNet18()
+    print("The model used is PreActResNet18")
+else:
+    print("This model hasn't been defined ", args.model)
+    raise NotImplementedError
 if torch.cuda.device_count() > 1:
     print("Let's use", torch.cuda.device_count(), "GPUs!")
     net = torch.nn.DataParallel(net)
@@ -78,7 +88,7 @@ if args.resume:
     # Load checkpoint.
     print('==> Resuming from checkpoint..')
     assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
-    checkpoint = torch.load(args.checkpoint)
+    checkpoint = torch.load(args.checkpoint + '.pth')
     net.load_state_dict(checkpoint['net'])
     best_acc = checkpoint['acc']
     start_epoch = checkpoint['epoch']
@@ -143,11 +153,11 @@ def test(epoch):
         }
         if not os.path.isdir('checkpoint'):
             os.mkdir('checkpoint')
-        torch.save(state, './checkpoint/ckpt.pth')
+        torch.save(state, args.checkpoint + '.pth')
         best_acc = acc
 
 
-for epoch in range(start_epoch, start_epoch+200):
+for epoch in range(start_epoch, start_epoch + args.num_epochs):
     train(epoch)
     test(epoch)
     step_lr_scheduler.step()
