@@ -12,7 +12,7 @@ function print_usage {
         echo -e "RUN_TIME\t\tRun time limit for the jupyter notebook on the cluster (HH:MM)"
         echo -e "LOG_DIR\t\tThe directory where tensorboard log locates\n"
         echo -e "Example:\n"
-        echo -e "./start_tensorboard.sh LeoOpen pekang 04:00 robust_machine_learning/jupyter_notebook/runs\n"
+        echo -e "./start_tensorboard.sh LeoOpen pekang 04:00 standard_cifar10\n"
 }
 
 # if number of command line arguments is different from 4 or if $1==-h or $1==--help
@@ -86,7 +86,7 @@ module load $PCOMMAND
 export XDG_RUNTIME_DIR=
 IP_REMOTE="\$(hostname -i)"
 echo "Remote IP:\$IP_REMOTE" >> /cluster/home/$USERNAME/tbip
-tensorboard --logdir=/cluster/home/$USERNAME/$LOG_DIR --host "\$IP_REMOTE" &> /cluster/home/$USERNAME/tbinfo 
+tensorboard --logdir=/cluster/home/$USERNAME/robustml/code/tensorboard/$LOG_DIR --host "\$IP_REMOTE" &> /cluster/home/$USERNAME/tbinfo 
 ENDBSUB
 
 # wait until tensorboard has started, poll every 60 seconds to check if $HOME/tbinfo exists

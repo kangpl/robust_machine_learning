@@ -17,7 +17,7 @@ from utils.util import progress_bar
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
-parser.add_argument('--batch_size', '-b', default=256, type=int, help='mini-batch size')
+parser.add_argument('--batch_size', '-b', default=128, type=int, help='mini-batch size')
 parser.add_argument('--num_epochs', default=200, type=int)
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
 parser.add_argument('--checkpoint', '-c', default='./checkpoint/ckpt.pth', type=str,  help='path to save checkpoint ('
@@ -49,7 +49,7 @@ trainloader = torch.utils.data.DataLoader(
 testset = torchvision.datasets.CIFAR10(
     root='./data', train=False, download=True, transform=transform_test)
 testloader = torch.utils.data.DataLoader(
-    testset, batch_size=100, shuffle=False, num_workers=2)
+    testset, batch_size=args.batch_size, shuffle=False, num_workers=2)
 
 classes = ('plane', 'car', 'bird', 'cat', 'deer',
            'dog', 'frog', 'horse', 'ship', 'truck')
@@ -107,8 +107,8 @@ def train(epoch):
         progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
                      % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
     # ...log the training loss
-    writer.add_scalar('loss', {'train_loss': train_loss/(batch_idx+1)}, epoch+1)
-    writer.add_scalar('accuracy', {'train_accuracy': 100.*correct/total}, epoch+1)
+    writer.add_scalars('loss', {'train': train_loss/(batch_idx+1)}, epoch+1)
+    writer.add_scalars('accuracy', {'train': 100.*correct/total}, epoch+1)
 
 def test(epoch):
     global best_acc
@@ -129,8 +129,8 @@ def test(epoch):
 
             progress_bar(batch_idx, len(testloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
                          % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
-    writer.add_scalar('loss', {'test_loss': test_loss/(batch_idx+1)}, epoch+1)
-    writer.add_scalar('accuracy', {'test_accuracy': 100.*correct/total}, epoch+1)
+    writer.add_scalars('loss', {'test': test_loss/(batch_idx+1)}, epoch+1)
+    writer.add_scalars('accuracy', {'test': 100.*correct/total}, epoch+1)
 
     # Save checkpoint.
     acc = 100.*correct/total
@@ -143,7 +143,7 @@ def test(epoch):
         }
         if not os.path.isdir('checkpoint'):
             os.mkdir('checkpoint')
-        torch.save(state, './checkpoint/ckpt' + epoch + '.pth')
+        torch.save(state, './checkpoint/ckpt.pth')
         best_acc = acc
 
 
@@ -152,4 +152,6 @@ for epoch in range(start_epoch, start_epoch+200):
     test(epoch)
     step_lr_scheduler.step()
     writer.add_scalar('learning rate', optimizer.param_groups[0]['lr'], epoch+1)
+
+writer.close()
 
