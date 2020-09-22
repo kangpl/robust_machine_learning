@@ -168,11 +168,23 @@ def main():
         checkpoint = torch.load(os.path.join(CHECKPOINT_DIR, args.resumed_model_name))
         model.load_state_dict(checkpoint['model'])
         resumed_epoch = checkpoint['epoch']
-        resumed_acc = checkpoint['acc']
-        logger.info(f'finetune from epoch {resumed_epoch} with acc {resumed_acc}')
+        resumed_train_loss = checkpoint['train_loss']
+        resumed_train_acc = checkpoint['train_acc']
+        resumed_test_standard_loss = checkpoint['test_standard_loss']
+        resumed_test_standard_acc = checkpoint['test_standard_acc']
+        resumed_test_attack_loss = checkpoint['test_attack_loss']
+        resumed_test_attack_acc = checkpoint['test_attack_acc']
+        logger.info(
+            f"finetune from epoch {resumed_epoch}, train loss {resumed_train_loss}, train acc {resumed_train_acc}, "
+            f"Test Standard Loss {resumed_test_standard_loss}, Test Standard Acc {resumed_test_standard_acc}, "
+            f"Test Attack Loss {resumed_test_attack_loss}, Test Attack Acc {resumed_test_attack_acc}")
         if args.resume:
-            best_acc = checkpoint['acc']
+            best_acc = checkpoint['test_attack_acc']
             start_epoch = checkpoint['epoch']
+        writer.add_scalars('loss', {'train': resumed_train_loss, 'test_standard': resumed_test_standard_loss,
+                                    "test_attack": resumed_test_attack_loss}, start_epoch)
+        writer.add_scalars('accuracy', {'train': resumed_train_acc, 'test_standard': resumed_test_standard_acc,
+                                        'test_attack': resumed_test_attack_acc}, start_epoch)
 
     logger.info(
         'Epoch \t Train Time \t Test Time \t LR \t \t Train Loss \t Train Acc \t Test Standard Loss \t Test Standard '
@@ -181,7 +193,8 @@ def main():
         start_time = time.time()
         train_loss, train_acc = train(args, model, trainloader, optimizer, criterion)
         train_time = time.time()
-        test_standard_loss, test_standard_acc, test_attack_loss, test_attack_acc = test(args, model, testloader, criterion)
+        test_standard_loss, test_standard_acc, test_attack_loss, test_attack_acc = test(args, model, testloader,
+                                                                                        criterion)
         test_time = time.time()
 
         logger.info(
@@ -192,19 +205,37 @@ def main():
         if test_attack_acc > best_acc:
             state = {
                 'model': model.state_dict(),
-                'acc': test_attack_acc,
+                'train_loss': train_loss,
+                'train_acc': train_acc,
+                'test_standard_loss': test_standard_loss,
+                'test_standard_acc': test_standard_acc,
+                'test_attack_loss': test_attack_loss,
+                'test_attack_acc': test_attack_acc,
                 'epoch': epoch,
             }
             torch.save(state, os.path.join(CHECKPOINT_DIR, args.exp_name + '_best.pth'))
             best_acc = test_attack_acc
 
-        writer.add_scalars('loss', {'train': train_loss, 'test_standard': test_standard_loss, 'test_attack': test_attack_loss}, epoch + 1)
-        writer.add_scalars('accuracy', {'train': train_acc, 'test_standard': test_standard_acc, 'test_attack': test_attack_acc}, epoch + 1)
+        writer.add_scalars('loss',
+                           {'train': train_loss, 'test_standard': test_standard_loss, 'test_attack': test_attack_loss},
+                           epoch + 1)
+        writer.add_scalars('accuracy',
+                           {'train': train_acc, 'test_standard': test_standard_acc, 'test_attack': test_attack_acc},
+                           epoch + 1)
         writer.add_scalar('learning rate', optimizer.param_groups[0]['lr'], epoch + 1)
         if args.lr_schedule == 'multistep':
             step_lr_scheduler.step()
 
-    torch.save({'model': model.state_dict(), 'acc': test_attack_acc, 'epoch': epoch}, os.path.join(CHECKPOINT_DIR, args.exp_name + '_final.pth'))
+    torch.save({
+        'model': model.state_dict(),
+        'train_loss': train_loss,
+        'train_acc': train_acc,
+        'test_standard_loss': test_standard_loss,
+        'test_standard_acc': test_standard_acc,
+        'test_attack_loss': test_attack_loss,
+        'test_attack_acc': test_attack_acc,
+        'epoch': epoch},
+        os.path.join(CHECKPOINT_DIR, args.exp_name + '_final.pth'))
     writer.close()
 
 
