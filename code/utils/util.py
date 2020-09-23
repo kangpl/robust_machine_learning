@@ -9,7 +9,6 @@ import torch
 from torchvision import datasets, transforms
 import torch.nn.functional as F
 
-
 cifar10_mean = (0.4914, 0.4822, 0.4465)
 cifar10_std = (0.2470, 0.2435, 0.2616)
 
@@ -19,8 +18,14 @@ std = torch.tensor(cifar10_std).view(3, 1, 1).cuda()
 upper_limit = ((1 - mu) / std)
 lower_limit = ((0 - mu) / std)
 
+
 def clamp(X, lower_limit, upper_limit):
     return torch.max(torch.min(X, upper_limit), lower_limit)
+
+
+def get_batch_l2_norm(v):
+    norms = (v ** 2).sum([1, 2, 3]) ** 0.5
+    return norms
 
 
 def get_mean_and_std():
@@ -76,10 +81,10 @@ def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts, device, norm
             d_flat = delta.view(delta.size(0), -1)
             n = d_flat.norm(p=2, dim=1).view(delta.size(0), 1, 1, 1)
             r = torch.zeros_like(n).uniform_(0, 1)
-            delta *= r/n*epsilon
+            delta *= r / n * epsilon
         else:
             raise ValueError
-        delta = clamp(delta, lower_limit-X, upper_limit-X)
+        delta = clamp(delta, lower_limit - X, upper_limit - X)
         delta.requires_grad = True
 
         for _ in range(attack_iters):
@@ -100,13 +105,88 @@ def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts, device, norm
                 d = clamp(d + alpha * torch.sign(g), -epsilon, epsilon)
             elif norm == "l_2":
                 g_norm = torch.norm(g.view(g.shape[0], -1), dim=1).view(-1, 1, 1, 1)
-                scaled_g = g/(g_norm + 1e-10)
-                d = (d + scaled_g*alpha).view(d.size(0), -1).renorm(p=2, dim=0, maxnorm=epsilon).view_as(d)
+                scaled_g = g / (g_norm + 1e-10)
+                d = (d + scaled_g * alpha).view(d.size(0), -1).renorm(p=2, dim=0, maxnorm=epsilon).view_as(d)
             d = clamp(d, lower_limit - x, upper_limit - x)
             delta.data[index, :, :, :] = d
             delta.grad.zero_()
 
-        all_loss = F.cross_entropy(model(X+delta), y, reduction='none')
+        all_loss = F.cross_entropy(model(X + delta), y, reduction='none')
         max_delta[all_loss >= max_loss] = delta.detach()[all_loss >= max_loss]
         max_loss = torch.max(max_loss, all_loss)
     return max_delta
+
+
+def get_input_grad(model, X, y, delta_init='none', backprop=False, device='cuda'):
+    if delta_init == 'none':
+        delta = torch.zeros_like(X, requires_grad=True).to(device)
+    else:
+        raise ValueError('wrong delta init')
+
+    output = model(X + delta)
+    loss = F.cross_entropy(output, y)
+    grad = torch.autograd.grad(loss, delta, create_graph=True if backprop else False)[0]
+    if not backprop:
+        grad = grad.detach()
+    return grad
+
+
+def get_input_grad_v2(model, X, y):
+    X.requires_grad_()
+    output = model(X)
+    loss = F.cross_entropy(output, y)
+    grad = torch.autograd.grad(loss, X, create_graph=False)[0]
+    return grad.detach()
+
+
+def save_checkpoint(model, epoch, train_loss, train_acc, test_standard_loss, test_standard_acc, test_attack_loss,
+                    test_attack_acc, train_norm, test_norm, dir):
+    state = {
+        'model': model.state_dict(),
+        'train_loss': train_loss,
+        'train_acc': train_acc,
+        'test_standard_loss': test_standard_loss,
+        'test_standard_acc': test_standard_acc,
+        'test_attack_loss': test_attack_loss,
+        'test_attack_acc': test_attack_acc,
+        'train_norm': train_norm,
+        'test_norm': test_norm,
+        'epoch': epoch,
+    }
+    torch.save(state, dir)
+
+
+def tb_writer(writer, epoch, lr, train_loss, train_acc, test_standard_loss, test_standard_acc, test_attack_loss,
+              test_attack_acc, train_norm, test_norm):
+    writer.add_scalars('loss',
+                       {'train': train_loss, 'test_standard': test_standard_loss, 'test_attack': test_attack_loss},
+                       epoch + 1)
+    writer.add_scalars('accuracy',
+                       {'train': train_acc, 'test_standard': test_standard_acc, 'test_attack': test_attack_acc},
+                       epoch + 1)
+    writer.add_scalars('norm', {'train': train_norm, 'test': test_norm}, epoch + 1)
+    writer.add_scalar('learning rate', lr, epoch + 1)
+
+
+def log_resumed_info(checkpoint, logger, writer):
+    resumed_epoch = checkpoint['epoch']
+    resumed_train_loss = checkpoint['train_loss']
+    resumed_train_acc = checkpoint['train_acc']
+    resumed_test_standard_loss = checkpoint['test_standard_loss']
+    resumed_test_standard_acc = checkpoint['test_standard_acc']
+    resumed_test_attack_loss = checkpoint['test_attack_loss']
+    resumed_test_attack_acc = checkpoint['test_attack_acc']
+    resumed_train_norm = checkpoint['train_norm']
+    resumed_test_norm = checkpoint['test_norm']
+
+    logger.info(
+        f"finetune from epoch {resumed_epoch}, train loss {resumed_train_loss}, train acc {resumed_train_acc}, Test "
+        f"Standard Loss {resumed_test_standard_loss}, Test Standard Acc {resumed_test_standard_acc}, Test Attack Loss "
+        f"{resumed_test_attack_loss}, Test Attack Acc {resumed_test_attack_acc}, Train norm {resumed_train_norm}, "
+        f"test norm {resumed_test_norm}")
+
+    writer.add_scalars('loss', {'train': resumed_train_loss, 'test_standard': resumed_test_standard_loss,
+                                "test_attack": resumed_test_attack_loss}, 0)
+    writer.add_scalars('accuracy', {'train': resumed_train_acc, 'test_standard': resumed_test_standard_acc,
+                                    'test_attack': resumed_test_attack_acc}, 0)
+    writer.add_scalars('norm', {'train': resumed_train_norm, 'test': resumed_test_norm}, 0)
