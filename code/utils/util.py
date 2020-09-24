@@ -157,7 +157,7 @@ def save_checkpoint(model, epoch, train_loss, train_acc, test_standard_loss, tes
 
 
 def tb_writer(writer, epoch, lr, train_loss, train_acc, test_standard_loss, test_standard_acc, test_attack_loss,
-              test_attack_acc, train_norm, test_norm):
+              test_attack_acc, train_norm, train_norm_std, test_norm, test_norm_std):
     writer.add_scalars('loss',
                        {'train': train_loss, 'test_standard': test_standard_loss, 'test_attack': test_attack_loss},
                        epoch + 1)
@@ -165,6 +165,7 @@ def tb_writer(writer, epoch, lr, train_loss, train_acc, test_standard_loss, test
                        {'train': train_acc, 'test_standard': test_standard_acc, 'test_attack': test_attack_acc},
                        epoch + 1)
     writer.add_scalars('norm', {'train': train_norm, 'test': test_norm}, epoch + 1)
+    writer.add_scalars('norm_std', {'train': train_norm_std, 'test': test_norm_std}, epoch + 1)
     writer.add_scalar('learning rate', lr, epoch + 1)
 
 

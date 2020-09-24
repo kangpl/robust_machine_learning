@@ -51,7 +51,7 @@ def train(args, model, trainloader, optimizer, criterion):
     model.train()
     train_loss = 0
     train_correct = 0
-    train_norm = 0
+    train_norm = []
     train_total = 0
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
@@ -73,13 +73,14 @@ def train(args, model, trainloader, optimizer, criterion):
 
         inputs_grad = get_input_grad(model, inputs, targets, delta_init='none', backprop=False, device=args.device)
         # inputs_grad = get_input_grad_v2(model, inputs, targets)
-        norm = get_batch_l2_norm(inputs_grad).sum()
+        norm = get_batch_l2_norm(inputs_grad)
 
         train_loss += loss.item() * targets.size(0)
         train_correct += (outputs.max(dim=1)[1] == targets).sum().item()
-        train_norm += norm.item()
+        train_norm.append(norm.cpu().numpy())
         train_total += targets.size(0)
-    return train_loss / train_total, 100. * train_correct / train_total, train_norm / train_total
+    all_norm = np.concatenate(train_norm)
+    return train_loss / train_total, 100. * train_correct / train_total, all_norm.mean(), all_norm.std()
 
 
 def test(args, model, testloader, criterion):
@@ -88,12 +89,13 @@ def test(args, model, testloader, criterion):
     test_standard_correct = 0
     test_attack_loss = 0
     test_attack_correct = 0
-    test_norm = 0
+    test_norm = []
     test_total = 0
     for batch_idx, (inputs, targets) in enumerate(testloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
-        delta = attack_pgd(model, inputs, targets, args.test_epsilon, args.test_pgd_alpha, args.test_pgd_attack_iters, args.test_pgd_restarts, args.device)
+        delta = attack_pgd(model, inputs, targets, args.test_epsilon, args.test_pgd_alpha, args.test_pgd_attack_iters,
+                           args.test_pgd_restarts, args.device, early_stop=True)
         delta = delta.detach()
 
         attack_output = model(clamp(inputs + delta, lower_limit, upper_limit))
@@ -104,16 +106,16 @@ def test(args, model, testloader, criterion):
 
         inputs_grad = get_input_grad(model, inputs, targets, delta_init='none', backprop=False, device=args.device)
         # inputs_grad = get_input_grad_v2(model, inputs, targets)
-        norm = get_batch_l2_norm(inputs_grad).sum()
+        norm = get_batch_l2_norm(inputs_grad)
 
         test_attack_loss += attack_loss.item() * targets.size(0)
         test_attack_correct += (attack_output.max(1)[1] == targets).sum().item()
         test_standard_loss += loss.item() * targets.size(0)
         test_standard_correct += (output.max(1)[1] == targets).sum().item()
-        test_norm += norm.item()
+        test_norm.append(norm.cpu().numpy())
         test_total += targets.size(0)
-
-    return test_standard_loss / test_total, 100. * test_standard_correct / test_total, test_attack_loss / test_total, 100. * test_attack_correct / test_total, test_norm / test_total
+    all_norm = np.concatenate(test_norm)
+    return test_standard_loss / test_total, 100. * test_standard_correct / test_total, test_attack_loss / test_total, 100. * test_attack_correct / test_total, all_norm.mean(), all_norm.std()
 
 
 def main():
@@ -188,20 +190,21 @@ def main():
 
     logger.info(
         'Epoch \t Train Time \t Test Time \t LR \t \t Train Loss \t Train Acc \t Test Standard Loss \t Test Standard '
-        'Acc \t Test Attack Loss \t Test Attack Acc \t Train Norm \t Test Norm')
+        'Acc \t Test Attack Loss \t Test Attack Acc \t Train Norm \t Train Norm Std \t Test Norm \t Test Norm Std')
     for epoch in range(start_epoch, args.num_epochs):
         start_time = time.time()
-        train_loss, train_acc, train_norm = train(args, model, trainloader, optimizer, criterion)
+        train_loss, train_acc, train_norm, train_norm_std = train(args, model, trainloader, optimizer, criterion)
         train_time = time.time()
-        test_standard_loss, test_standard_acc, test_attack_loss, test_attack_acc, test_norm = test(args, model,
-                                                                                                   testloader,
-                                                                                                   criterion)
+        test_standard_loss, test_standard_acc, test_attack_loss, test_attack_acc, test_norm, test_norm_std = test(args,
+                                                                                                                  model,
+                                                                                                                  testloader,
+                                                                                                                  criterion)
         test_time = time.time()
 
         logger.info(
-            '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t \t \t %.4f \t %.4f',
+            '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t \t \t %.4f \t %.4f \t %.4f \t %.4f',
             epoch, train_time - start_time, test_time - train_time, optimizer.param_groups[0]['lr'], train_loss,
-            train_acc, test_standard_loss, test_standard_acc, test_attack_loss, test_attack_acc, train_norm, test_norm)
+            train_acc, test_standard_loss, test_standard_acc, test_attack_loss, test_attack_acc, train_norm, train_norm_std, test_norm, test_norm_std)
 
         if test_attack_acc > best_acc:
             save_checkpoint(model, epoch, train_loss, train_acc, test_standard_loss, test_standard_acc,
@@ -210,7 +213,7 @@ def main():
             best_acc = test_attack_acc
 
         tb_writer(writer, epoch, optimizer.param_groups[0]['lr'], train_loss, train_acc, test_standard_loss,
-                  test_standard_acc, test_attack_loss, test_attack_acc, train_norm, test_norm)
+                  test_standard_acc, test_attack_loss, test_attack_acc, train_norm, train_norm_std, test_norm, test_norm_std)
 
         if args.lr_schedule == 'multistep':
             step_lr_scheduler.step()

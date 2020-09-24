@@ -144,8 +144,39 @@
 #python main.py --model PreActResNet18 --lr 0.001 --lr_schedule multistep --lr_change_epoch 100 150 --num_epochs 200 --attack_during_train fgsm --train_fgsm_alpha 7 --finetune --resumed_model_name cifar10_standard_preActResNet18_add_norm_exp3_final.pth --exp_name cifar10_finetune_fgsm_7_lr_0.001_multi_epoch_200_preActResNet18_exp1
 #ENDBSUB
 #
+#PCOMMAND="gcc/6.3.0 python_gpu/3.8.5 eth_proxy"
+#bsub -n 8 -W 08:00 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
+#module load $PCOMMAND
+#python main.py --model PreActResNet18 --lr 0.001 --lr_schedule multistep --lr_change_epoch 100 150 --num_epochs 200 --attack_during_train fgsm --train_fgsm_alpha 16 --finetune --resumed_model_name cifar10_standard_preActResNet18_add_norm_exp3_final.pth --exp_name cifar10_finetune_fgsm_16_lr_0.001_multi_epoch_200_preActResNet18_exp1
+#ENDBSUB
+
+
+#PCOMMAND="gcc/6.3.0 python_gpu/3.8.5 eth_proxy"
+#bsub -n 8 -W 08:00 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
+#module load $PCOMMAND
+#python main.py --model PreActResNet18 --attack_during_train none --exp_name cifar10_standard_preActResNet18_add_norm_std_exp4
+#ENDBSUB
+
+#PCOMMAND="gcc/6.3.0 python_gpu/3.8.5 eth_proxy"
+#bsub -n 8 -W 08:00 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
+#module load $PCOMMAND
+#python main.py --model PreActResNet18 --attack_during_train fgsm --train_fgsm_alpha 7 --exp_name cifar10_fgsm_7_preActResNet18_add_norm_std_exp4
+#ENDBSUB
+
+#PCOMMAND="gcc/6.3.0 python_gpu/3.8.5 eth_proxy"
+#bsub -n 8 -W 08:00 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
+#module load $PCOMMAND
+#python main.py --model PreActResNet18 --attack_during_train fgsm --train_fgsm_alpha 10 --exp_name cifar10_fgsm_10_preActResNet18_add_norm_std_exp4
+#ENDBSUB
+#
+#PCOMMAND="gcc/6.3.0 python_gpu/3.8.5 eth_proxy"
+#bsub -n 8 -W 08:00 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
+#module load $PCOMMAND
+#python main.py --model PreActResNet18 --attack_during_train fgsm --train_fgsm_alpha 16 --exp_name cifar10_fgsm_16_preActResNet18_add_norm_std_exp4
+#ENDBSUB
+
 PCOMMAND="gcc/6.3.0 python_gpu/3.8.5 eth_proxy"
-bsub -n 8 -W 08:00 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
+bsub -n 8 -W 99:99 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
 module load $PCOMMAND
-python main.py --model PreActResNet18 --lr 0.001 --lr_schedule multistep --lr_change_epoch 100 150 --num_epochs 200 --attack_during_train fgsm --train_fgsm_alpha 16 --finetune --resumed_model_name cifar10_standard_preActResNet18_add_norm_exp3_final.pth --exp_name cifar10_finetune_fgsm_16_lr_0.001_multi_epoch_200_preActResNet18_exp1
+python main.py --model PreActResNet18 --attack_during_train fgsm --train_fgsm_alpha 10 --test_pgd_attack_iters 50 --test_pgd_restarts 10 --exp_name cifar10_fgsm_10_pgd_50_10_preActResNet18_exp1
 ENDBSUB
