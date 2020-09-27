@@ -175,8 +175,32 @@
 #python main.py --model PreActResNet18 --attack_during_train fgsm --train_fgsm_alpha 16 --exp_name cifar10_fgsm_16_preActResNet18_add_norm_std_exp4
 #ENDBSUB
 
+#PCOMMAND="gcc/6.3.0 python_gpu/3.8.5 eth_proxy"
+#bsub -n 8 -W 99:99 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
+#module load $PCOMMAND
+#python main.py --model PreActResNet18 --attack_during_train fgsm --train_fgsm_alpha 10 --test_pgd_attack_iters 50 --test_pgd_restarts 10 --exp_name cifar10_fgsm_10_pgd_50_10_preActResNet18_exp1
+#ENDBSUB
+
+#PCOMMAND="gcc/6.3.0 python_gpu/3.8.5 eth_proxy"
+#bsub -n 8 -W 99:99 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
+#module load $PCOMMAND
+#python main.py --model PreActResNet18 --attack_during_train fgsm --train_fgsm_alpha 16 --test_pgd_attack_iters 50 --test_pgd_restarts 10 --exp_name cifar10_fgsm_16_pgd_50_10_preActResNet18_exp1
+#ENDBSUB
+
 PCOMMAND="gcc/6.3.0 python_gpu/3.8.5 eth_proxy"
-bsub -n 8 -W 99:99 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
+bsub -n 8 -W 24:00 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
 module load $PCOMMAND
-python main.py --model PreActResNet18 --attack_during_train fgsm --train_fgsm_alpha 10 --test_pgd_attack_iters 50 --test_pgd_restarts 10 --exp_name cifar10_fgsm_10_pgd_50_10_preActResNet18_exp1
+python main.py --model PreActResNet18 --attack_during_train fgsm --train_fgsm_alpha 7 --attack_during_test deepfool --exp_name test
 ENDBSUB
+
+#PCOMMAND="gcc/6.3.0 python_gpu/3.8.5 eth_proxy"
+#bsub -n 8 -W 24:00 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
+#module load $PCOMMAND
+#python main.py --model PreActResNet18 --attack_during_train pgd --attack_during_test deepfool --exp_name test_pgd
+#ENDBSUB
+
+#PCOMMAND="gcc/6.3.0 python_gpu/3.8.5 eth_proxy"
+#bsub -n 8 -W 24:00 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
+#module load $PCOMMAND
+#python main.py --model PreActResNet18 --attack_during_train pgd --train_pgd_attack_iters 20 --train_pgd_restarts 2 --attack_during_test deepfool --exp_name test_pgd_2
+#ENDBSUB

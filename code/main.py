@@ -13,6 +13,7 @@ from torch.utils.tensorboard import SummaryWriter
 from models.preact_resnet import PreActResNet18
 from models.resnet import ResNet18
 from utils.util import *
+from deepfool import deepfool
 
 
 def get_args():
@@ -37,6 +38,8 @@ def get_args():
     parser.add_argument('--test_pgd_alpha', default=2, type=float)
     parser.add_argument('--test_pgd_attack_iters', default=10, type=int)
     parser.add_argument('--test_pgd_restarts', default=1, type=int)
+    parser.add_argument('--deepfool_classes_num', default=2, type=int)
+    parser.add_argument('--deepfool_max_iter', default=50, type=int)
 
     parser.add_argument('--finetune', action='store_true', help='finetune the pre-trained model with adversarial '
                                                                 'samples or regularization')
@@ -94,11 +97,15 @@ def test(args, model, testloader, criterion):
     for batch_idx, (inputs, targets) in enumerate(testloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
-        delta = attack_pgd(model, inputs, targets, args.test_epsilon, args.test_pgd_alpha, args.test_pgd_attack_iters,
-                           args.test_pgd_restarts, args.device, early_stop=True)
-        delta = delta.detach()
+        if args.attack_during_test == 'pgd':
+            delta = attack_pgd(model, inputs, targets, args.test_epsilon, args.test_pgd_alpha, args.test_pgd_attack_iters,
+                               args.test_pgd_restarts, args.device, early_stop=True)
+            delta = delta.detach()
+            attack_output = model(clamp(inputs + delta, lower_limit, upper_limit))
+        elif args.attack_during_test == 'deepfool':
+            pert_inputs = deepfool(model, inputs, targets, args.test_epsilon, num_classes=args.deepfool_classes_num, max_iter=args.deepfool_max_iter, device=args.device)
+            attack_output = model(pert_inputs)
 
-        attack_output = model(clamp(inputs + delta, lower_limit, upper_limit))
         attack_loss = criterion(attack_output, targets)
 
         output = model(inputs)

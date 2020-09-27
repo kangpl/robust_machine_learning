@@ -12,7 +12,7 @@ function print_usage {
         echo -e "RUN_TIME\t\tRun time limit for the jupyter notebook on the cluster (HH:MM)"
         echo -e "LOG_DIR\t\tThe directory where tensorboard log locates\n"
         echo -e "Example:\n"
-        echo -e "./start_tensorboard.sh LeoOpen pekang 04:00 cifar10_finetune_fgsm_7_lr_multi_epoch_60_preActResNet18_exp1\n"
+        echo -e "./start_tensorboard.sh LeoOpen pekang 04:00 cifar10_fgsm_16_preActResNet18_add_norm_std_exp4\n"
 }
 
 # if number of command line arguments is different from 4 or if $1==-h or $1==--help
