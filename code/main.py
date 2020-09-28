@@ -40,7 +40,10 @@ def get_args():
     parser.add_argument('--test_pgd_restarts', default=1, type=int)
     parser.add_argument('--deepfool_classes_num', default=2, type=int)
     parser.add_argument('--deepfool_max_iter', default=50, type=int)
-
+    parser.add_argument('--mix', action='store_true', help='train adversarial samples and clean samples alternatively '
+                                                           'in one iteration')
+    parser.add_argument('--adjust_fgsm_alpha', action='store_true', help='decrease the fgsm alpha when the norm of '
+                                                                         'inputs gradient increase suddenly')
     parser.add_argument('--finetune', action='store_true', help='finetune the pre-trained model with adversarial '
                                                                 'samples or regularization')
     parser.add_argument('--resumed_model_name', default='standard_cifar.pth', help='the file name of resumed model')
@@ -50,7 +53,7 @@ def get_args():
 
 
 # Training
-def train(args, model, trainloader, optimizer, criterion):
+def train(args, model, trainloader, optimizer, criterion, prev_norm):
     model.train()
     train_loss = 0
     train_correct = 0
@@ -74,16 +77,27 @@ def train(args, model, trainloader, optimizer, criterion):
         loss.backward()
         optimizer.step()
 
+        if args.mix:
+            clean_outputs = model(inputs)
+            clean_loss = criterion(clean_outputs, targets)
+            optimizer.zero_grad()
+            clean_loss.backward()
+            optimizer.step()
+
         inputs_grad = get_input_grad(model, inputs, targets, delta_init='none', backprop=False, device=args.device)
         # inputs_grad = get_input_grad_v2(model, inputs, targets)
         norm = get_batch_l2_norm(inputs_grad)
+        if args.adjust_fgsm_alpha and prev_norm != np.inf and norm.cpu().numpy().mean() / prev_norm > 5:
+            args.train_fgsm_alpha /= 2
+            prev_norm = norm.cpu().numpy().mean()
 
         train_loss += loss.item() * targets.size(0)
         train_correct += (outputs.max(dim=1)[1] == targets).sum().item()
         train_norm.append(norm.cpu().numpy())
         train_total += targets.size(0)
     all_norm = np.concatenate(train_norm)
-    return train_loss / train_total, 100. * train_correct / train_total, all_norm.mean(), all_norm.std()
+    return train_loss / train_total, 100. * train_correct / train_total, all_norm.mean(), all_norm.std(), np.median(
+        all_norm)
 
 
 def test(args, model, testloader, criterion):
@@ -98,12 +112,14 @@ def test(args, model, testloader, criterion):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
         if args.attack_during_test == 'pgd':
-            delta = attack_pgd(model, inputs, targets, args.test_epsilon, args.test_pgd_alpha, args.test_pgd_attack_iters,
+            delta = attack_pgd(model, inputs, targets, args.test_epsilon, args.test_pgd_alpha,
+                               args.test_pgd_attack_iters,
                                args.test_pgd_restarts, args.device, early_stop=True)
             delta = delta.detach()
             attack_output = model(clamp(inputs + delta, lower_limit, upper_limit))
         elif args.attack_during_test == 'deepfool':
-            pert_inputs = deepfool(model, inputs, targets, args.test_epsilon, num_classes=args.deepfool_classes_num, max_iter=args.deepfool_max_iter, device=args.device)
+            pert_inputs = deepfool(model, inputs, targets, args.test_epsilon, num_classes=args.deepfool_classes_num,
+                                   max_iter=args.deepfool_max_iter, device=args.device)
             attack_output = model(pert_inputs)
 
         attack_loss = criterion(attack_output, targets)
@@ -122,7 +138,8 @@ def test(args, model, testloader, criterion):
         test_norm.append(norm.cpu().numpy())
         test_total += targets.size(0)
     all_norm = np.concatenate(test_norm)
-    return test_standard_loss / test_total, 100. * test_standard_correct / test_total, test_attack_loss / test_total, 100. * test_attack_correct / test_total, all_norm.mean(), all_norm.std()
+    return test_standard_loss / test_total, 100. * test_standard_correct / test_total, test_attack_loss / test_total, 100. * test_attack_correct / test_total, all_norm.mean(), all_norm.std(), np.median(
+        all_norm)
 
 
 def main():
@@ -196,22 +213,23 @@ def main():
         log_resumed_info(checkpoint, logger, writer)
 
     logger.info(
-        'Epoch \t Train Time \t Test Time \t LR \t \t Train Loss \t Train Acc \t Test Standard Loss \t Test Standard '
-        'Acc \t Test Attack Loss \t Test Attack Acc \t Train Norm \t Train Norm Std \t Test Norm \t Test Norm Std')
+        'Epoch \t Train Time \t Test Time \t LR \t \t Train Loss \t Train Acc \t Test Standard Loss \t Test Standard Acc \t Test Attack Loss \t Test Attack Acc \t Train Norm \t Train Norm Std \t Train Norm Median \t Test Norm \t Test Norm Std \t Test Norm Median')
+    prev_norm = np.inf
     for epoch in range(start_epoch, args.num_epochs):
         start_time = time.time()
-        train_loss, train_acc, train_norm, train_norm_std = train(args, model, trainloader, optimizer, criterion)
+        train_loss, train_acc, train_norm, train_norm_std, train_norm_median = train(args, model, trainloader,
+                                                                                     optimizer, criterion, prev_norm)
         train_time = time.time()
-        test_standard_loss, test_standard_acc, test_attack_loss, test_attack_acc, test_norm, test_norm_std = test(args,
-                                                                                                                  model,
-                                                                                                                  testloader,
-                                                                                                                  criterion)
+        test_standard_loss, test_standard_acc, test_attack_loss, test_attack_acc, test_norm, test_norm_std, test_norm_median = test(
+            args, model, testloader, criterion)
         test_time = time.time()
+        prev_norm = train_norm
 
         logger.info(
-            '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t \t \t %.4f \t %.4f \t %.4f \t %.4f',
+            '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t \t \t %.4f \t %.4f \t \t %.4f \t %.4f \t %.4f \t \t %.4f',
             epoch, train_time - start_time, test_time - train_time, optimizer.param_groups[0]['lr'], train_loss,
-            train_acc, test_standard_loss, test_standard_acc, test_attack_loss, test_attack_acc, train_norm, train_norm_std, test_norm, test_norm_std)
+            train_acc, test_standard_loss, test_standard_acc, test_attack_loss, test_attack_acc, train_norm,
+            train_norm_std, train_norm_median, test_norm, test_norm_std, test_norm_median)
 
         if test_attack_acc > best_acc:
             save_checkpoint(model, epoch, train_loss, train_acc, test_standard_loss, test_standard_acc,
@@ -220,7 +238,8 @@ def main():
             best_acc = test_attack_acc
 
         tb_writer(writer, epoch, optimizer.param_groups[0]['lr'], train_loss, train_acc, test_standard_loss,
-                  test_standard_acc, test_attack_loss, test_attack_acc, train_norm, train_norm_std, test_norm, test_norm_std)
+                  test_standard_acc, test_attack_loss, test_attack_acc, train_norm, train_norm_std, train_norm_median,
+                  test_norm, test_norm_std, test_norm_median)
 
         if args.lr_schedule == 'multistep':
             step_lr_scheduler.step()
