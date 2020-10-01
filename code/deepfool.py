@@ -3,9 +3,8 @@ import copy
 from utils.util import *
 
 
-def deepfool(model, inputs, target, epsilon, num_classes=2, overshoot=0.02, max_iter=50, device='cuda'):
+def deepfool(model, inputs, target, num_classes=2, overshoot=0.02, max_iter=50, device='cuda'):
     """
-       :param epsilon:
        :param inputs:
        :param target:
        :param device:
@@ -19,12 +18,12 @@ def deepfool(model, inputs, target, epsilon, num_classes=2, overshoot=0.02, max_
     w = torch.zeros(inputs.shape).to(device)
     r_tot = torch.zeros(inputs.shape).to(device)
 
-    loop_i = 0
+    loop_i = torch.zeros(inputs.shape[0]).to(device)
     pert_inputs = copy.deepcopy(inputs).requires_grad_()
-    while loop_i < max_iter:
+    while loop_i.max() < max_iter:
         output = model(pert_inputs)
         index = torch.where(output.max(1)[1] == target)[0]
-        if loop_i == 0:
+        if loop_i.max() == 0:
             I = torch.flip(output.argsort(), (-1,))[:, :num_classes]
         if len(index) == 0:
             break
@@ -55,8 +54,8 @@ def deepfool(model, inputs, target, epsilon, num_classes=2, overshoot=0.02, max_
         r_i = (pert[index, None, None, None] + 1e-4) * w[index] / torch.norm(w[index].view(w[index].shape[0], -1),
                                                                              dim=1).view(-1, 1, 1, 1)
         r_tot[index] = r_tot[index] + r_i
-        r_tot = clamp(r_tot, -epsilon, epsilon)
-        pert_inputs = clamp(inputs + (1 + overshoot) * r_tot, lower_limit, upper_limit).requires_grad_()
-        loop_i += 1
+        pert_inputs = (inputs + (1 + overshoot) * r_tot).requires_grad_()
+        loop_i[index] += 1
 
-    return pert_inputs.detach()
+    r_tot = (1 + overshoot) * r_tot
+    return pert_inputs.detach(), loop_i, torch.norm(r_tot.view(r_tot.shape[0], -1), dim=1)

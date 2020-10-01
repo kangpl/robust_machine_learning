@@ -156,19 +156,65 @@ def save_checkpoint(model, epoch, train_loss, train_acc, test_standard_loss, tes
     torch.save(state, dir)
 
 
-def tb_writer(writer, epoch, lr, train_loss, train_acc, test_standard_loss, test_standard_acc, test_attack_loss,
-              test_attack_acc, train_norm, train_norm_std, train_norm_median, test_norm, test_norm_std,
-              test_norm_median):
+def tb_writer(writer, model, epoch, lr, train_loss, train_acc, test_standard_loss, test_standard_acc, test_attack_loss,
+              test_attack_acc, train_norm_mean, train_norm_std, train_norm_median, test_norm_mean, test_norm_std,
+              test_norm_median, train_all_norm, test_all_norm, train_df_loop, train_df_perturbation_norm, test_df_loop, test_df_perturbation_norm):
     writer.add_scalars('loss',
-                       {'train': train_loss, 'test_standard': test_standard_loss, 'test_attack': test_attack_loss},
+                       {'train_robust': train_loss, 'test_clean': test_standard_loss, 'test_robust': test_attack_loss},
                        epoch + 1)
     writer.add_scalars('accuracy',
-                       {'train': train_acc, 'test_standard': test_standard_acc, 'test_attack': test_attack_acc},
+                       {'train_robust': train_acc, 'test_clean': test_standard_acc, 'test_robust': test_attack_acc},
                        epoch + 1)
-    writer.add_scalars('norm', {'train': train_norm, 'test': test_norm}, epoch + 1)
-    writer.add_scalars('norm_std', {'train': train_norm_std, 'test': test_norm_std}, epoch + 1)
+    writer.add_scalars('norm_mean', {'train': train_norm_mean, 'test': test_norm_mean}, epoch + 1)
     writer.add_scalars('norm_median', {'train': train_norm_median, 'test': test_norm_median}, epoch + 1)
+    writer.add_scalars('norm_std', {'train': train_norm_std, 'test': test_norm_std}, epoch + 1)
+    writer.add_histogram('grad_norm_train', train_all_norm, epoch + 1, bins='auto')
+    writer.add_histogram('grad_norm_test', test_all_norm, epoch + 1, bins='auto')
     writer.add_scalar('learning rate', lr, epoch + 1)
+    train_df_loop_mean = -1
+    train_df_loop_median = -1
+    train_df_loop_std = -1
+    train_df_perturbation_mean = -1
+    train_df_perturbation_median = -1
+    train_df_perturbation_std = -1
+    if train_df_loop.size > 1:
+        train_df_loop_mean = train_df_loop.mean()
+        train_df_loop_median = np.median(train_df_loop)
+        train_df_loop_std = train_df_loop.std()
+        train_df_perturbation_mean = train_df_perturbation_norm.mean()
+        train_df_perturbation_median = np.median(train_df_perturbation_norm)
+        train_df_perturbation_std = train_df_perturbation_norm.std()
+
+    test_df_loop_mean = -1
+    test_df_loop_median = -1
+    test_df_loop_std = -1
+    test_df_perturbation_mean = -1
+    test_df_perturbation_median = -1
+    test_df_perturbation_std = -1
+    if test_df_loop.size > 1:
+        test_df_loop_mean = test_df_loop.mean()
+        test_df_loop_median = np.median(test_df_loop)
+        test_df_loop_std = test_df_loop.std()
+        test_df_perturbation_mean = test_df_perturbation_norm.mean()
+        test_df_perturbation_median = np.median(test_df_perturbation_norm)
+        test_df_perturbation_std = test_df_perturbation_norm.std()
+    writer.add_scalars('df_loop_mean', {'train': train_df_loop_mean, 'test': test_df_loop_mean}, epoch + 1)
+    writer.add_scalars('df_loop_median', {'train': train_df_loop_median, 'test': test_df_loop_median}, epoch + 1)
+    writer.add_scalars('df_loop_std', {'train': train_df_loop_std, 'test': test_df_loop_std}, epoch + 1)
+    writer.add_scalars('df_perturbation_mean', {'train': train_df_perturbation_mean, 'test': test_df_perturbation_mean}, epoch + 1)
+    writer.add_scalars('df_perturbation_median', {'train': train_df_perturbation_median, 'test': test_df_perturbation_median}, epoch + 1)
+    writer.add_scalars('df_perturbation_std', {'train': train_df_perturbation_std, 'test': test_df_perturbation_std}, epoch + 1)
+    writer.add_histogram('train_df_loop', train_df_loop, epoch + 1, bins='auto')
+    writer.add_histogram('test_df_loop', test_df_loop, epoch + 1, bins='auto')
+    writer.add_histogram('train_df_perturbation_norm', train_df_perturbation_norm, epoch + 1, bins='auto')
+    writer.add_histogram('test_df_perturbation_norm', test_df_perturbation_norm, epoch + 1, bins='auto')
+
+    # for name, param in model.named_parameters():
+    #     writer.add_histogram(name, param.data, epoch+1)
+    # for name, param in model.named_parameters():
+    #     writer.add_scalar(name+'_grad', torch.norm(param.grad.detach()).item(), epoch+1)
+    # for name, param in model.named_parameters():
+    #     writer.add_histogram(name+'_grad', param.grad.detach(), epoch+1)
 
 
 def log_resumed_info(checkpoint, logger, writer):
@@ -188,8 +234,8 @@ def log_resumed_info(checkpoint, logger, writer):
         f"{resumed_test_attack_loss}, Test Attack Acc {resumed_test_attack_acc}, Train norm {resumed_train_norm}, "
         f"test norm {resumed_test_norm}")
 
-    writer.add_scalars('loss', {'train': resumed_train_loss, 'test_standard': resumed_test_standard_loss,
-                                "test_attack": resumed_test_attack_loss}, 0)
-    writer.add_scalars('accuracy', {'train': resumed_train_acc, 'test_standard': resumed_test_standard_acc,
-                                    'test_attack': resumed_test_attack_acc}, 0)
-    writer.add_scalars('norm', {'train': resumed_train_norm, 'test': resumed_test_norm}, 0)
+    # writer.add_scalars('loss', {'train': resumed_train_loss, 'test_standard': resumed_test_standard_loss,
+    #                             "test_attack": resumed_test_attack_loss}, 0)
+    # writer.add_scalars('accuracy', {'train': resumed_train_acc, 'test_standard': resumed_test_standard_acc,
+    #                                 'test_attack': resumed_test_attack_acc}, 0)
+    # writer.add_scalars('norm', {'train': resumed_train_norm, 'test': resumed_test_norm}, 0)

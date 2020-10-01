@@ -15,6 +15,7 @@ from models.resnet import ResNet18
 from utils.util import *
 from deepfool import deepfool
 from cure import cure
+import numpy as np
 
 
 def get_args():
@@ -31,7 +32,7 @@ def get_args():
     parser.add_argument('--cure', action='store_true', help='use curvature regularization during training')
     parser.add_argument('--cure_lambda', default=4, type=int)
     parser.add_argument('--cure_h', default=1.5, type=float)
-    parser.add_argument('--attack_during_train', default='fgsm', type=str, choices=['pgd', 'fgsm', 'none'])
+    parser.add_argument('--attack_during_train', default='fgsm', type=str, choices=['pgd', 'fgsm', 'none','both'])
     parser.add_argument('--train_epsilon', default=8, type=int)
     parser.add_argument('--train_fgsm_alpha', default=10, type=float)
     parser.add_argument('--train_pgd_alpha', default=2, type=float)
@@ -54,17 +55,22 @@ def get_args():
 
 
 # Training
-def train(args, model, trainloader, optimizer, criterion):
+def train(args, model, trainloader, optimizer, criterion, epoch):
     model.train()
     train_loss = 0
     train_correct = 0
     train_norm = []
     train_total = 0
+    df_loop = []
+    df_perturbation_norm = []
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
         if args.cure:
             outputs = model(inputs)
-            loss = criterion(outputs, targets) + args.cure_lambda * cure(model, inputs, targets, h=args.cure_h, device=args.device)
+            if epoch < 5:
+                loss = criterion(outputs, targets) + args.cure_lambda * cure(model, inputs, targets, h=args.cure_h / 5 * (epoch + 1), device=args.device)
+            else:
+                loss = criterion(outputs, targets) + args.cure_lambda * cure(model, inputs, targets, h=args.cure_h, device=args.device)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -87,15 +93,23 @@ def train(args, model, trainloader, optimizer, criterion):
 
         inputs_grad = get_input_grad(model, inputs, targets, delta_init='none', backprop=False, device=args.device)
         # inputs_grad = get_input_grad_v2(model, inputs, targets)
-        norm = get_batch_l2_norm(inputs_grad)
+        norm = inputs_grad.view(inputs_grad.shape[0], -1).norm(dim=1)
+
+        # deepfool attack
+        if batch_idx % 10 == 0:
+            pert_inputs, loop, perturbation = deepfool(model, inputs, targets, num_classes=args.deepfool_classes_num,
+                                                       max_iter=args.deepfool_max_iter, device=args.device)
+            df_loop.append(loop.cpu().numpy())
+            df_perturbation_norm.append(perturbation.cpu().numpy())
 
         train_loss += loss.item() * targets.size(0)
         train_correct += (outputs.max(dim=1)[1] == targets).sum().item()
         train_norm.append(norm.cpu().numpy())
         train_total += targets.size(0)
     all_norm = np.concatenate(train_norm)
-    return train_loss / train_total, 100. * train_correct / train_total, all_norm.mean(), all_norm.std(), np.median(
-        all_norm)
+    df_loop = np.concatenate(df_loop)
+    df_perturbation_norm = np.concatenate(df_perturbation_norm)
+    return train_loss / train_total, 100. * train_correct / train_total, all_norm, df_loop, df_perturbation_norm
 
 
 def test(args, model, testloader, criterion):
@@ -105,6 +119,8 @@ def test(args, model, testloader, criterion):
     test_attack_loss = 0
     test_attack_correct = 0
     test_norm = []
+    df_loop = []
+    df_perturbation_norm = []
     test_total = 0
     for batch_idx, (inputs, targets) in enumerate(testloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
@@ -116,9 +132,10 @@ def test(args, model, testloader, criterion):
             delta = delta.detach()
             attack_output = model(clamp(inputs + delta, lower_limit, upper_limit))
         elif args.attack_during_test == 'deepfool':
-            pert_inputs = deepfool(model, inputs, targets, args.test_epsilon, num_classes=args.deepfool_classes_num,
-                                   max_iter=args.deepfool_max_iter, device=args.device)
+            pert_inputs, loop, perturbation = deepfool(model, inputs, targets, num_classes=args.deepfool_classes_num, max_iter=args.deepfool_max_iter, device=args.device)
             attack_output = model(pert_inputs)
+            df_loop.append(loop.cpu().numpy())
+            df_perturbation_norm.append(perturbation.cpu().numpy())
 
         attack_loss = criterion(attack_output, targets)
 
@@ -127,7 +144,7 @@ def test(args, model, testloader, criterion):
 
         inputs_grad = get_input_grad(model, inputs, targets, delta_init='none', backprop=False, device=args.device)
         # inputs_grad = get_input_grad_v2(model, inputs, targets)
-        norm = get_batch_l2_norm(inputs_grad)
+        norm = inputs_grad.view(inputs_grad.shape[0], -1).norm(dim=1)
 
         test_attack_loss += attack_loss.item() * targets.size(0)
         test_attack_correct += (attack_output.max(1)[1] == targets).sum().item()
@@ -136,8 +153,13 @@ def test(args, model, testloader, criterion):
         test_norm.append(norm.cpu().numpy())
         test_total += targets.size(0)
     all_norm = np.concatenate(test_norm)
-    return test_standard_loss / test_total, 100. * test_standard_correct / test_total, test_attack_loss / test_total, 100. * test_attack_correct / test_total, all_norm.mean(), all_norm.std(), np.median(
-        all_norm)
+    if args.attack_during_test == 'deepfool':
+        df_loop = np.concatenate(df_loop)
+        df_perturbation_norm = np.concatenate(df_perturbation_norm)
+    else:
+        df_loop = np.array([])
+        df_perturbation_norm = np.array([])
+    return test_standard_loss / test_total, 100. * test_standard_correct / test_total, test_attack_loss / test_total, 100. * test_attack_correct / test_total, all_norm, df_loop, df_perturbation_norm
 
 
 def main():
@@ -214,33 +236,38 @@ def main():
         'Epoch \t Train Time \t Test Time \t LR \t \t Train Loss \t Train Acc \t Test Standard Loss \t Test Standard Acc \t Test Attack Loss \t Test Attack Acc \t Train Norm \t Train Norm Std \t Train Norm Median \t Test Norm \t Test Norm Std \t Test Norm Median')
     for epoch in range(start_epoch, args.num_epochs):
         start_time = time.time()
-        train_loss, train_acc, train_norm, train_norm_std, train_norm_median = train(args, model, trainloader,
-                                                                                     optimizer, criterion)
+        train_loss, train_acc, train_all_norm, train_df_loop, train_df_perturbation_norm = train(args, model, trainloader, optimizer, criterion, epoch)
+        train_norm_mean = train_all_norm.mean()
+        train_norm_median = np.median(train_all_norm)
+        train_norm_std = train_all_norm.std()
         train_time = time.time()
-        test_standard_loss, test_standard_acc, test_attack_loss, test_attack_acc, test_norm, test_norm_std, test_norm_median = test(
-            args, model, testloader, criterion)
+
+        test_standard_loss, test_standard_acc, test_attack_loss, test_attack_acc, test_all_norm, test_df_loop, test_df_perturbation_norm = test(args, model, testloader, criterion)
+        test_norm_mean = test_all_norm.mean()
+        test_norm_median = np.median(test_all_norm)
+        test_norm_std = test_all_norm.std()
         test_time = time.time()
 
         logger.info(
             '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t \t \t %.4f \t %.4f \t \t %.4f \t %.4f \t %.4f \t \t %.4f',
             epoch, train_time - start_time, test_time - train_time, optimizer.param_groups[0]['lr'], train_loss,
-            train_acc, test_standard_loss, test_standard_acc, test_attack_loss, test_attack_acc, train_norm,
-            train_norm_std, train_norm_median, test_norm, test_norm_std, test_norm_median)
+            train_acc, test_standard_loss, test_standard_acc, test_attack_loss, test_attack_acc, train_norm_mean,
+            train_norm_std, train_norm_median, test_norm_mean, test_norm_std, test_norm_median)
 
         if test_attack_acc > best_acc:
             save_checkpoint(model, epoch, train_loss, train_acc, test_standard_loss, test_standard_acc,
-                            test_attack_loss, test_attack_acc, train_norm, test_norm,
+                            test_attack_loss, test_attack_acc, train_norm_mean, test_norm_mean,
                             os.path.join(CHECKPOINT_DIR, args.exp_name + '_best.pth'))
             best_acc = test_attack_acc
 
-        tb_writer(writer, epoch, optimizer.param_groups[0]['lr'], train_loss, train_acc, test_standard_loss,
-                  test_standard_acc, test_attack_loss, test_attack_acc, train_norm, train_norm_std, train_norm_median,
-                  test_norm, test_norm_std, test_norm_median)
+        tb_writer(writer, model, epoch, optimizer.param_groups[0]['lr'], train_loss, train_acc, test_standard_loss,
+                  test_standard_acc, test_attack_loss, test_attack_acc, train_norm_mean, train_norm_std, train_norm_median,
+                  test_norm_mean, test_norm_std, test_norm_median, train_all_norm, test_all_norm, train_df_loop, train_df_perturbation_norm, test_df_loop, test_df_perturbation_norm)
 
         if args.lr_schedule == 'multistep':
             step_lr_scheduler.step()
     save_checkpoint(model, epoch, train_loss, train_acc, test_standard_loss, test_standard_acc, test_attack_loss,
-                    test_attack_acc, train_norm, test_norm, os.path.join(CHECKPOINT_DIR, args.exp_name + '_final.pth'))
+                    test_attack_acc, train_norm_mean, test_norm_mean, os.path.join(CHECKPOINT_DIR, args.exp_name + '_final.pth'))
     writer.close()
 
 
