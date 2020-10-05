@@ -140,7 +140,7 @@ def get_input_grad_v2(model, X, y):
 
 
 def save_checkpoint(model, epoch, train_loss, train_acc, test_standard_loss, test_standard_acc, test_attack_loss,
-                    test_attack_acc, train_norm, test_norm, dir):
+                    test_attack_acc, dir):
     state = {
         'model': model.state_dict(),
         'train_loss': train_loss,
@@ -149,28 +149,64 @@ def save_checkpoint(model, epoch, train_loss, train_acc, test_standard_loss, tes
         'test_standard_acc': test_standard_acc,
         'test_attack_loss': test_attack_loss,
         'test_attack_acc': test_attack_acc,
-        'train_norm': train_norm,
-        'test_norm': test_norm,
         'epoch': epoch,
     }
     torch.save(state, dir)
 
 
-def tb_writer(writer, model, epoch, lr, train_loss, train_acc, test_standard_loss, test_standard_acc, test_attack_loss,
-              test_attack_acc, train_norm_mean, train_norm_std, train_norm_median, test_norm_mean, test_norm_std,
-              test_norm_median, train_all_norm, test_all_norm, train_df_loop, train_df_perturbation_norm, test_df_loop, test_df_perturbation_norm):
+def tb_writer_adjust_alpha(writer, epoch, lr, train_fgsm_loss, train_fgsm_acc,
+                  train_pgd_loss, train_pgd_acc, train_all_norm,
+                  test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc,
+                  test_pgd_loss, test_pgd_acc, test_all_norm):
     writer.add_scalars('loss',
-                       {'train_robust': train_loss, 'test_clean': test_standard_loss, 'test_robust': test_attack_loss},
+                       {'train_fgsm': train_fgsm_loss, 'train_pgd': train_pgd_loss,
+                        'test_clean': test_clean_loss, 'test_fgsm': test_fgsm_loss, 'test_pgd': test_pgd_loss},
                        epoch + 1)
     writer.add_scalars('accuracy',
-                       {'train_robust': train_acc, 'test_clean': test_standard_acc, 'test_robust': test_attack_acc},
+                       {'train_fgsm': train_fgsm_acc, 'train_pgd': train_pgd_acc,
+                        'test_clean': test_clean_acc, 'test_fgsm': test_fgsm_acc, 'test_pgd': test_pgd_acc},
                        epoch + 1)
-    writer.add_scalars('norm_mean', {'train': train_norm_mean, 'test': test_norm_mean}, epoch + 1)
-    writer.add_scalars('norm_median', {'train': train_norm_median, 'test': test_norm_median}, epoch + 1)
-    writer.add_scalars('norm_std', {'train': train_norm_std, 'test': test_norm_std}, epoch + 1)
-    writer.add_histogram('grad_norm_train', train_all_norm, epoch + 1, bins='auto')
-    writer.add_histogram('grad_norm_test', test_all_norm, epoch + 1, bins='auto')
+    train_inputs_grad_norm_mean = train_all_norm.mean()
+    train_inputs_grad_norm_median = np.median(train_all_norm)
+    train_inputs_grad_norm_std = train_all_norm.std()
+    test_inputs_grad_norm_mean = test_all_norm.mean()
+    test_inputs_grad_norm_median = np.median(test_all_norm)
+    test_inputs_grad_norm_std = test_all_norm.std()
+    writer.add_scalars('inputs_grad_norm_mean', {'train': train_inputs_grad_norm_mean, 'test': test_inputs_grad_norm_mean}, epoch + 1)
+    writer.add_scalars('inputs_grad_norm_median', {'train': train_inputs_grad_norm_median, 'test': test_inputs_grad_norm_median}, epoch + 1)
+    writer.add_scalars('inputs_grad_norm_std', {'train': train_inputs_grad_norm_std, 'test': test_inputs_grad_norm_std}, epoch + 1)
+    writer.add_histogram('inputs_grad_norm_train', train_all_norm, epoch + 1, bins='auto')
+    writer.add_histogram('inputs_grad_norm_test', test_all_norm, epoch + 1, bins='auto')
     writer.add_scalar('learning rate', lr, epoch + 1)
+
+
+def tb_writer(writer, epoch, lr, train_fgsm_loss, train_fgsm_acc,
+                  train_pgd_loss, train_pgd_acc, train_deepfool_loss, train_deepfool_acc,
+                  train_all_norm, train_df_loop, train_df_perturbation_norm,
+                  test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc,
+                  test_pgd_loss, test_pgd_acc, test_deepfool_loss, test_deepfool_acc,
+                  test_all_norm, test_df_loop, test_df_perturbation_norm):
+    writer.add_scalars('loss',
+                       {'train_fgsm': train_fgsm_loss, 'train_pgd': train_pgd_loss, 'train_deepfool': train_deepfool_loss,
+                        'test_clean': test_clean_loss, 'test_fgsm': test_fgsm_loss, 'test_pgd': test_pgd_loss, 'test_deepfool': test_deepfool_loss},
+                       epoch + 1)
+    writer.add_scalars('accuracy',
+                       {'train_fgsm': train_fgsm_acc, 'train_pgd': train_pgd_acc, 'train_deepfool': train_deepfool_acc,
+                        'test_clean': test_clean_acc, 'test_fgsm': test_fgsm_acc, 'test_pgd': test_pgd_acc, 'test_deepfool': test_deepfool_acc},
+                       epoch + 1)
+    train_inputs_grad_norm_mean = train_all_norm.mean()
+    train_inputs_grad_norm_median = np.median(train_all_norm)
+    train_inputs_grad_norm_std = train_all_norm.std()
+    test_inputs_grad_norm_mean = test_all_norm.mean()
+    test_inputs_grad_norm_median = np.median(test_all_norm)
+    test_inputs_grad_norm_std = test_all_norm.std()
+    writer.add_scalars('inputs_grad_norm_mean', {'train': train_inputs_grad_norm_mean, 'test': test_inputs_grad_norm_mean}, epoch + 1)
+    writer.add_scalars('inputs_grad_norm_median', {'train': train_inputs_grad_norm_median, 'test': test_inputs_grad_norm_median}, epoch + 1)
+    writer.add_scalars('inputs_grad_norm_std', {'train': train_inputs_grad_norm_std, 'test': test_inputs_grad_norm_std}, epoch + 1)
+    writer.add_histogram('inputs_grad_norm_train', train_all_norm, epoch + 1, bins='auto')
+    writer.add_histogram('inputs_grad_norm_test', test_all_norm, epoch + 1, bins='auto')
+    writer.add_scalar('learning rate', lr, epoch + 1)
+
     train_df_loop_mean = -1
     train_df_loop_median = -1
     train_df_loop_std = -1
@@ -209,15 +245,8 @@ def tb_writer(writer, model, epoch, lr, train_loss, train_acc, test_standard_los
     writer.add_histogram('train_df_perturbation_norm', train_df_perturbation_norm, epoch + 1, bins='auto')
     writer.add_histogram('test_df_perturbation_norm', test_df_perturbation_norm, epoch + 1, bins='auto')
 
-    # for name, param in model.named_parameters():
-    #     writer.add_histogram(name, param.data, epoch+1)
-    # for name, param in model.named_parameters():
-    #     writer.add_scalar(name+'_grad', torch.norm(param.grad.detach()).item(), epoch+1)
-    # for name, param in model.named_parameters():
-    #     writer.add_histogram(name+'_grad', param.grad.detach(), epoch+1)
 
-
-def log_resumed_info(checkpoint, logger, writer):
+def log_resumed_info(checkpoint, logger):
     resumed_epoch = checkpoint['epoch']
     resumed_train_loss = checkpoint['train_loss']
     resumed_train_acc = checkpoint['train_acc']
@@ -225,17 +254,8 @@ def log_resumed_info(checkpoint, logger, writer):
     resumed_test_standard_acc = checkpoint['test_standard_acc']
     resumed_test_attack_loss = checkpoint['test_attack_loss']
     resumed_test_attack_acc = checkpoint['test_attack_acc']
-    resumed_train_norm = checkpoint['train_norm']
-    resumed_test_norm = checkpoint['test_norm']
 
     logger.info(
         f"finetune from epoch {resumed_epoch}, train loss {resumed_train_loss}, train acc {resumed_train_acc}, Test "
         f"Standard Loss {resumed_test_standard_loss}, Test Standard Acc {resumed_test_standard_acc}, Test Attack Loss "
-        f"{resumed_test_attack_loss}, Test Attack Acc {resumed_test_attack_acc}, Train norm {resumed_train_norm}, "
-        f"test norm {resumed_test_norm}")
-
-    # writer.add_scalars('loss', {'train': resumed_train_loss, 'test_standard': resumed_test_standard_loss,
-    #                             "test_attack": resumed_test_attack_loss}, 0)
-    # writer.add_scalars('accuracy', {'train': resumed_train_acc, 'test_standard': resumed_test_standard_acc,
-    #                                 'test_attack': resumed_test_attack_acc}, 0)
-    # writer.add_scalars('norm', {'train': resumed_train_norm, 'test': resumed_test_norm}, 0)
+        f"{resumed_test_attack_loss}, Test Attack Acc {resumed_test_attack_acc}")
