@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 
 
-def cure(model, inputs, target, h=1.5, device='cuda'): #increase first 5 slowly adam always from finetuning 60 epoches
+def cure(model, inputs, target, h=1.5, device='cuda'): #increase first 5 slowly,  adam,  always from finetuning,  60 epoches
     # get z
     model.eval()
     delta = torch.zeros_like(inputs, requires_grad=True).to(device)

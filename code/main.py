@@ -14,7 +14,6 @@ from models.preact_resnet import PreActResNet18
 from models.resnet import ResNet18
 from utils.util import *
 from deepfool import deepfool
-from cure import cure
 import numpy as np
 
 
@@ -55,41 +54,28 @@ def get_args():
 
 
 # Training
-def train(args, model, trainloader, optimizer, criterion, epoch):
+def train(args, model, trainloader, optimizer, criterion):
     model.train()
     train_loss = 0
     train_correct = 0
     train_total = 0
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
-        if args.cure:
-            outputs = model(inputs)
-            if epoch < 5:
-                loss = criterion(outputs, targets) + args.cure_lambda * cure(model, inputs, targets,
-                                                                             h=args.cure_h / 5 * (epoch + 1),
-                                                                             device=args.device)
-            else:
-                loss = criterion(outputs, targets) + args.cure_lambda * cure(model, inputs, targets, h=args.cure_h,
-                                                                             device=args.device)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
 
-        else:
-            if args.attack_during_train == 'pgd':
-                delta = attack_pgd(model, inputs, targets, args.train_epsilon, args.train_pgd_alpha,
-                                   args.train_pgd_attack_iters, args.train_pgd_restarts, args.device)
-            elif args.attack_during_train == 'fgsm':
-                delta = attack_pgd(model, inputs, targets, args.train_epsilon, args.train_fgsm_alpha, 1, 1, args.device)
-            elif args.attack_during_train == 'none':
-                delta = torch.zeros_like(inputs)
-            delta = delta.detach()
+        if args.attack_during_train == 'pgd':
+            delta = attack_pgd(model, inputs, targets, args.train_epsilon, args.train_pgd_alpha,
+                               args.train_pgd_attack_iters, args.train_pgd_restarts, args.device)
+        elif args.attack_during_train == 'fgsm':
+            delta = attack_pgd(model, inputs, targets, args.train_epsilon, args.train_fgsm_alpha, 1, 1, args.device)
+        elif args.attack_during_train == 'none':
+            delta = torch.zeros_like(inputs)
+        delta = delta.detach()
 
-            outputs = model(clamp(inputs + delta, lower_limit, upper_limit))
-            loss = criterion(outputs, targets)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+        outputs = model(clamp(inputs + delta, lower_limit, upper_limit))
+        loss = criterion(outputs, targets)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
         train_loss += loss.item() * targets.size(0)
         train_correct += (outputs.max(dim=1)[1] == targets).sum().item()
@@ -104,17 +90,19 @@ def test(args, model, trainloader, testloader, criterion):
     train_pgd_correct = 0
     train_deepfool_loss = 0
     train_deepfool_correct = 0
-    train_norm = []
     train_df_loop = []
     train_df_perturbation_norm = []
+    train_df_grad_norm = []
+    train_input_grad_norm = []
+    train_cos = []
     train_total = 0
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         if batch_idx % 10 == 0:
             inputs, targets = inputs.to(args.device), targets.to(args.device)
 
             # pgd
-            delta_pgd = attack_pgd(model, inputs, targets, args.train_epsilon, args.train_pgd_alpha,
-                                   args.train_pgd_attack_iters, args.train_pgd_restarts, args.device,
+            delta_pgd = attack_pgd(model, inputs, targets, args.test_epsilon, args.test_pgd_alpha,
+                                   args.test_pgd_attack_iters, args.test_pgd_restarts, args.device,
                                    early_stop=True).detach()
             outputs_pgd = model(clamp(inputs + delta_pgd, lower_limit, upper_limit))
             loss_pgd = criterion(outputs_pgd, targets)
@@ -122,24 +110,36 @@ def test(args, model, trainloader, testloader, criterion):
             # deepfool attack
             pert_inputs, loop, perturbation = deepfool(model, inputs, targets, num_classes=args.deepfool_classes_num,
                                                        max_iter=args.deepfool_max_iter, device=args.device)
-            outputs_deepfool = model(pert_inputs)
-            loss_deepfool = criterion(outputs_deepfool, targets)
+            deepfool_grad, outputs_deepfool, loss_deepfool = get_input_grad_v2(model, pert_inputs, targets)
+            deepfool_grad_norm = deepfool_grad.view(deepfool_grad.shape[0], -1).norm(dim=1)
 
-            # input norm
-            inputs_grad = get_input_grad(model, inputs, targets, delta_init='none', backprop=False, device=args.device)
-            norm = inputs_grad.view(inputs_grad.shape[0], -1).norm(dim=1)
+            # input gradient norm
+            inputs_grad, _, _ = get_input_grad_v2(model, inputs, targets)
+            inputs_grad_norm = inputs_grad.view(inputs_grad.shape[0], -1).norm(dim=1)
+
+            # calculate cosine
+            grads_nnz_idx = (inputs_grad_norm != 0) * (deepfool_grad_norm != 0)
+            grad1, grad2 = inputs_grad[grads_nnz_idx], deepfool_grad[grads_nnz_idx]
+            grad1_norms, grad2_norms = inputs_grad_norm[grads_nnz_idx], deepfool_grad_norm[grads_nnz_idx]
+            grad1_normalized = grad1 / grad1_norms[:, None, None, None]
+            grad2_normalized = grad2 / grad2_norms[:, None, None, None]
+            cos = torch.sum(grad1_normalized * grad2_normalized, (1, 2, 3))
 
             train_pgd_loss += loss_pgd.item() * targets.size(0)
             train_pgd_correct += (outputs_pgd.max(dim=1)[1] == targets).sum().item()
             train_deepfool_loss += loss_deepfool.item() * targets.size(0)
             train_deepfool_correct += (outputs_deepfool.max(dim=1)[1] == targets).sum().item()
-            train_norm.append(norm.cpu().numpy())
             train_total += targets.size(0)
             train_df_loop.append(loop.cpu().numpy())
             train_df_perturbation_norm.append(perturbation.cpu().numpy())
-    train_all_norm = np.concatenate(train_norm)
+            train_df_grad_norm.append(deepfool_grad_norm.cpu().numpy())
+            train_input_grad_norm.append(inputs_grad_norm.cpu().numpy())
+            train_cos.append(cos.cpu().numpy())
     train_df_loop = np.concatenate(train_df_loop)
     train_df_perturbation_norm = np.concatenate(train_df_perturbation_norm)
+    train_df_grad_norm = np.concatenate(train_df_grad_norm)
+    train_input_grad_norm = np.concatenate(train_input_grad_norm)
+    train_cos = np.concatenate(train_cos)
 
     test_clean_loss = 0
     test_clean_correct = 0
@@ -149,9 +149,11 @@ def test(args, model, trainloader, testloader, criterion):
     test_pgd_correct = 0
     test_deepfool_loss = 0
     test_deepfool_correct = 0
-    test_norm = []
     test_df_loop = []
     test_df_perturbation_norm = []
+    test_df_grad_norm = []
+    test_input_grad_norm = []
+    test_cos = []
     test_total = 0
     for batch_idx, (inputs, targets) in enumerate(testloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
@@ -176,12 +178,20 @@ def test(args, model, trainloader, testloader, criterion):
         # deepfool
         pert_inputs, loop, perturbation = deepfool(model, inputs, targets, num_classes=args.deepfool_classes_num,
                                                    max_iter=args.deepfool_max_iter, device=args.device)
-        outputs_deepfool = model(pert_inputs)
-        loss_deepfool = criterion(outputs_deepfool, targets)
+        deepfool_grad, outputs_deepfool, loss_deepfool = get_input_grad_v2(model, pert_inputs, targets)
+        deepfool_grad_norm = deepfool_grad.view(deepfool_grad.shape[0], -1).norm(dim=1)
 
         # norm
-        inputs_grad = get_input_grad(model, inputs, targets, delta_init='none', backprop=False, device=args.device)
-        norm = inputs_grad.view(inputs_grad.shape[0], -1).norm(dim=1)
+        inputs_grad, _, _ = get_input_grad_v2(model, inputs, targets)
+        inputs_grad_norm = inputs_grad.view(inputs_grad.shape[0], -1).norm(dim=1)
+
+        # calculate cosine
+        grads_nnz_idx = (inputs_grad_norm != 0) * (deepfool_grad_norm != 0)
+        grad1, grad2 = inputs_grad[grads_nnz_idx], deepfool_grad[grads_nnz_idx]
+        grad1_norms, grad2_norms = inputs_grad_norm[grads_nnz_idx], deepfool_grad_norm[grads_nnz_idx]
+        grad1_normalized = grad1 / grad1_norms[:, None, None, None]
+        grad2_normalized = grad2 / grad2_norms[:, None, None, None]
+        cos = torch.sum(grad1_normalized * grad2_normalized, (1, 2, 3))
 
         test_clean_loss += loss_clean.item() * targets.size(0)
         test_clean_correct += (outputs_clean.max(1)[1] == targets).sum().item()
@@ -192,20 +202,25 @@ def test(args, model, trainloader, testloader, criterion):
         test_deepfool_loss += loss_deepfool.item() * targets.size(0)
         test_deepfool_correct += (outputs_deepfool.max(1)[1] == targets).sum().item()
         test_total += targets.size(0)
-        test_norm.append(norm.cpu().numpy())
         test_df_loop.append(loop.cpu().numpy())
         test_df_perturbation_norm.append(perturbation.cpu().numpy())
-    test_all_norm = np.concatenate(test_norm)
+        test_df_grad_norm.append(deepfool_grad_norm.cpu().numpy())
+        test_input_grad_norm.append(inputs_grad_norm.cpu().numpy())
+        test_cos.append(cos.cpu().numpy())
     test_df_loop = np.concatenate(test_df_loop)
     test_df_perturbation_norm = np.concatenate(test_df_perturbation_norm)
+    test_df_grad_norm = np.concatenate(test_df_grad_norm)
+    test_input_grad_norm = np.concatenate(test_input_grad_norm)
+    test_cos = np.concatenate(test_cos)
+
     return train_pgd_loss / train_total, 100. * train_pgd_correct / train_total, \
            train_deepfool_loss / train_total, 100. * train_deepfool_correct / train_total, \
-           train_all_norm, train_df_loop, train_df_perturbation_norm, \
+           train_input_grad_norm, train_df_loop, train_df_perturbation_norm, train_df_grad_norm, train_cos, \
            test_clean_loss / test_total, 100. * test_clean_correct / test_total, \
            test_fgsm_loss / test_total, 100. * test_fgsm_correct / test_total, \
            test_pgd_loss / test_total, 100. * test_pgd_correct / test_total, \
            test_deepfool_loss / test_total, 100. * test_deepfool_correct / test_total, \
-           test_all_norm, test_df_loop, test_df_perturbation_norm
+           test_input_grad_norm, test_df_loop, test_df_perturbation_norm, test_df_grad_norm, test_cos
 
 
 def main():
@@ -282,14 +297,17 @@ def main():
         'Epoch \t Train Time \t Test Time \t LR \t \t Train Loss \t Train Acc \t Test Standard Loss \t Test Standard Acc \t Test Attack Loss \t Test Attack Acc')
     for epoch in range(start_epoch, args.num_epochs):
         start_time = time.time()
-        train_fgsm_loss, train_fgsm_acc = train(args, model, trainloader, optimizer, criterion, epoch)
+        train_fgsm_loss, train_fgsm_acc = train(args, model, trainloader, optimizer, criterion)
         train_time = time.time()
 
         train_pgd_loss, train_pgd_acc, train_deepfool_loss, train_deepfool_acc, \
-        train_all_norm, train_df_loop, train_df_perturbation_norm, \
+        train_input_grad_norm, train_df_loop, train_df_perturbation_norm, train_df_grad_norm, train_cos, \
         test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, \
         test_pgd_loss, test_pgd_acc, test_deepfool_loss, test_deepfool_acc, \
-        test_all_norm, test_df_loop, test_df_perturbation_norm = test(args, model, trainloader, testloader, criterion)
+        test_input_grad_norm, test_df_loop, test_df_perturbation_norm, test_df_grad_norm, test_cos = test(args, model,
+                                                                                                          trainloader,
+                                                                                                          testloader,
+                                                                                                          criterion)
         test_time = time.time()
 
         logger.info(
@@ -304,10 +322,10 @@ def main():
 
         tb_writer(writer, epoch, optimizer.param_groups[0]['lr'], train_fgsm_loss, train_fgsm_acc,
                   train_pgd_loss, train_pgd_acc, train_deepfool_loss, train_deepfool_acc,
-                  train_all_norm, train_df_loop, train_df_perturbation_norm,
+                  train_input_grad_norm, train_df_loop, train_df_perturbation_norm, train_df_grad_norm, train_cos,
                   test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc,
                   test_pgd_loss, test_pgd_acc, test_deepfool_loss, test_deepfool_acc,
-                  test_all_norm, test_df_loop, test_df_perturbation_norm)
+                  test_input_grad_norm, test_df_loop, test_df_perturbation_norm, test_df_grad_norm, test_cos)
 
         if args.lr_schedule == 'multistep':
             step_lr_scheduler.step()

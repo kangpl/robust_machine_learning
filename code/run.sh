@@ -481,8 +481,62 @@
 #python main.py --model PreActResNet18 --attack_during_train none --num_epochs 20 --exp_name test_none
 #ENDBSUB
 
+#PCOMMAND="gcc/6.3.0 python_gpu/3.8.5 eth_proxy"
+#bsub -n 8 -W 08:00 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
+#module load $PCOMMAND
+#python main.py --model PreActResNet18 --attack_during_train fgsm --train_fgsm_alpha 10 --attack_during_test deepfool --exp_name deepfool
+#ENDBSUB
+
+#PCOMMAND="gcc/6.3.0 python_gpu/3.8.5 eth_proxy"
+#bsub -n 8 -W 24:00 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
+#module load $PCOMMAND
+#python main.py --model PreActResNet18 --attack_during_train fgsm --train_fgsm_alpha 10 --exp_name fgsm_pgd_deepfool
+#ENDBSUB
+
+#PCOMMAND="gcc/6.3.0 python_gpu/3.8.5 eth_proxy"
+#bsub -n 8 -W 24:00 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
+#module load $PCOMMAND
+#python main.py --model PreActResNet18 --attack_during_train fgsm --train_fgsm_alpha 10 --exp_name fgsm_pgd_deepfool_exp2
+#ENDBSUB
+
+#PCOMMAND="gcc/6.3.0 python_gpu/3.8.5 eth_proxy"
+#bsub -n 8 -W 24:00 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
+#module load $PCOMMAND
+#python main.py --model PreActResNet18 --attack_during_train fgsm --train_fgsm_alpha 10 --exp_name fgsm_pgd_deepfool_exp3
+#ENDBSUB
+
+#PCOMMAND="gcc/6.3.0 python_gpu/3.8.5 eth_proxy"
+#bsub -n 8 -W 24:00 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
+#module load $PCOMMAND
+#python adjust_alpha.py --model PreActResNet18 --attack_during_train fgsm --train_fgsm_alpha 10 --exp_name fgsm_10_adjust_alpha_exp1
+#ENDBSUB
+
+#PCOMMAND="gcc/6.3.0 python_gpu/3.8.5 eth_proxy"
+#bsub -n 8 -W 24:00 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
+#module load $PCOMMAND
+#python adjust_alpha.py --model PreActResNet18 --attack_during_train fgsm --train_fgsm_alpha 16 --exp_name fgsm_16_adjust_alpha_exp1
+#ENDBSUB
+
+#PCOMMAND="gcc/6.3.0 python_gpu/3.8.5 eth_proxy"
+#bsub -n 8 -W 24:00 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
+#module load $PCOMMAND
+#python main.py --model PreActResNet18 --attack_during_train fgsm --train_fgsm_alpha 10 --exp_name fgsm_10_df_grad_cos
+#ENDBSUB
+
+#PCOMMAND="gcc/6.3.0 python_gpu/3.8.5 eth_proxy"
+#bsub -n 8 -W 24:00 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
+#module load $PCOMMAND
+#python main.py --model PreActResNet18 --attack_during_train fgsm --train_fgsm_alpha 10 --exp_name fgsm_10_df_grad_cos_exp2
+#ENDBSUB
+
+#PCOMMAND="gcc/6.3.0 python_gpu/3.8.5 eth_proxy"
+#bsub -n 8 -W 24:00 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
+#module load $PCOMMAND
+#python main.py --model PreActResNet18 --attack_during_train fgsm --train_fgsm_alpha 16 --exp_name fgsm_16_df_grad_cos_exp1
+#ENDBSUB
+
 PCOMMAND="gcc/6.3.0 python_gpu/3.8.5 eth_proxy"
-bsub -n 8 -W 08:00 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
+bsub -n 8 -W 24:00 -R "rusage[mem=2048,ngpus_excl_p=2]"  <<ENDBSUB
 module load $PCOMMAND
-python main.py --model PreActResNet18 --attack_during_train fgsm --train_fgsm_alpha 10 --attack_during_test deepfool --exp_name deepfool
+python main.py --model PreActResNet18 --attack_during_train fgsm --train_fgsm_alpha 16 --exp_name fgsm_16_df_grad_cos_exp2
 ENDBSUB
