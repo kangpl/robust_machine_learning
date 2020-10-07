@@ -112,13 +112,18 @@ def test(args, model, trainloader, testloader, criterion):
                                                        max_iter=args.deepfool_max_iter, device=args.device)
             deepfool_grad, outputs_deepfool, loss_deepfool = get_input_grad_v2(model, pert_inputs, targets)
             deepfool_grad_norm = deepfool_grad.view(deepfool_grad.shape[0], -1).norm(dim=1)
+            loop_nz_idx = (loop != 0)
+            loop_valid = loop[loop_nz_idx]
+            perturbation_valid = perturbation[loop_nz_idx]
+            deepfool_grad_norm_valid = deepfool_grad_norm[loop_nz_idx]
 
             # input gradient norm
             inputs_grad, _, _ = get_input_grad_v2(model, inputs, targets)
             inputs_grad_norm = inputs_grad.view(inputs_grad.shape[0], -1).norm(dim=1)
+            inputs_grad_norm_valid = inputs_grad_norm[loop_nz_idx]
 
             # calculate cosine
-            grads_nnz_idx = (inputs_grad_norm != 0) * (deepfool_grad_norm != 0)
+            grads_nnz_idx = (inputs_grad_norm != 0) * (deepfool_grad_norm != 0) * loop_nz_idx
             grad1, grad2 = inputs_grad[grads_nnz_idx], deepfool_grad[grads_nnz_idx]
             grad1_norms, grad2_norms = inputs_grad_norm[grads_nnz_idx], deepfool_grad_norm[grads_nnz_idx]
             grad1_normalized = grad1 / grad1_norms[:, None, None, None]
@@ -130,10 +135,10 @@ def test(args, model, trainloader, testloader, criterion):
             train_deepfool_loss += loss_deepfool.item() * targets.size(0)
             train_deepfool_correct += (outputs_deepfool.max(dim=1)[1] == targets).sum().item()
             train_total += targets.size(0)
-            train_df_loop.append(loop.cpu().numpy())
-            train_df_perturbation_norm.append(perturbation.cpu().numpy())
-            train_df_grad_norm.append(deepfool_grad_norm.cpu().numpy())
-            train_input_grad_norm.append(inputs_grad_norm.cpu().numpy())
+            train_df_loop.append(loop_valid.cpu().numpy())
+            train_df_perturbation_norm.append(perturbation_valid.cpu().numpy())
+            train_df_grad_norm.append(deepfool_grad_norm_valid.cpu().numpy())
+            train_input_grad_norm.append(inputs_grad_norm_valid.cpu().numpy())
             train_cos.append(cos.cpu().numpy())
     train_df_loop = np.concatenate(train_df_loop)
     train_df_perturbation_norm = np.concatenate(train_df_perturbation_norm)
@@ -180,13 +185,18 @@ def test(args, model, trainloader, testloader, criterion):
                                                    max_iter=args.deepfool_max_iter, device=args.device)
         deepfool_grad, outputs_deepfool, loss_deepfool = get_input_grad_v2(model, pert_inputs, targets)
         deepfool_grad_norm = deepfool_grad.view(deepfool_grad.shape[0], -1).norm(dim=1)
+        loop_nz_idx = (loop != 0)
+        loop_valid = loop[loop_nz_idx]
+        perturbation_valid = perturbation[loop_nz_idx]
+        deepfool_grad_norm_valid = deepfool_grad_norm[loop_nz_idx]
 
         # norm
         inputs_grad, _, _ = get_input_grad_v2(model, inputs, targets)
         inputs_grad_norm = inputs_grad.view(inputs_grad.shape[0], -1).norm(dim=1)
+        inputs_grad_norm_valid = inputs_grad_norm[loop_nz_idx]
 
         # calculate cosine
-        grads_nnz_idx = (inputs_grad_norm != 0) * (deepfool_grad_norm != 0)
+        grads_nnz_idx = (inputs_grad_norm != 0) * (deepfool_grad_norm != 0) * loop_nz_idx
         grad1, grad2 = inputs_grad[grads_nnz_idx], deepfool_grad[grads_nnz_idx]
         grad1_norms, grad2_norms = inputs_grad_norm[grads_nnz_idx], deepfool_grad_norm[grads_nnz_idx]
         grad1_normalized = grad1 / grad1_norms[:, None, None, None]
@@ -202,10 +212,10 @@ def test(args, model, trainloader, testloader, criterion):
         test_deepfool_loss += loss_deepfool.item() * targets.size(0)
         test_deepfool_correct += (outputs_deepfool.max(1)[1] == targets).sum().item()
         test_total += targets.size(0)
-        test_df_loop.append(loop.cpu().numpy())
-        test_df_perturbation_norm.append(perturbation.cpu().numpy())
-        test_df_grad_norm.append(deepfool_grad_norm.cpu().numpy())
-        test_input_grad_norm.append(inputs_grad_norm.cpu().numpy())
+        test_df_loop.append(loop_valid.cpu().numpy())
+        test_df_perturbation_norm.append(perturbation_valid.cpu().numpy())
+        test_df_grad_norm.append(deepfool_grad_norm_valid.cpu().numpy())
+        test_input_grad_norm.append(inputs_grad_norm_valid.cpu().numpy())
         test_cos.append(cos.cpu().numpy())
     test_df_loop = np.concatenate(test_df_loop)
     test_df_perturbation_norm = np.concatenate(test_df_perturbation_norm)
