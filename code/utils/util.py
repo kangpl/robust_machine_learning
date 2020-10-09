@@ -139,6 +139,16 @@ def get_input_grad_v2(model, X, y):
     return grad.detach(), output, loss
 
 
+def cal_cos_similarity(grad1, grad2, grad1_norm, grad2_norm):
+    grads_nnz_idx = (grad1_norm != 0) * (grad2_norm != 0)
+    grad1, grad2 = grad1[grads_nnz_idx], grad2[grads_nnz_idx]
+    grad1_norms, grad2_norms = grad1_norm[grads_nnz_idx], grad2_norm[grads_nnz_idx]
+    grad1_normalized = grad1 / grad1_norms[:, None, None, None]
+    grad2_normalized = grad2 / grad2_norms[:, None, None, None]
+    cos = torch.sum(grad1_normalized * grad2_normalized, (1, 2, 3))
+    return cos
+
+
 def save_checkpoint(model, epoch, train_loss, train_acc, test_standard_loss, test_standard_acc, test_attack_loss,
                     test_attack_acc, dir):
     state = {
@@ -182,21 +192,20 @@ def tb_writer_cure(writer, epoch, lr, train_fgsm_loss, train_fgsm_acc,
     writer.add_scalar('cure', cure_value, epoch + 1)
 
 
-def tb_writer(writer, epoch, lr, train_fgsm_loss, train_fgsm_acc,
-              train_pgd_loss, train_pgd_acc, train_deepfool_loss, train_deepfool_acc,
+def tb_writer_clean(writer, epoch, lr, train_loss, train_acc, train_deepfool_loss, train_deepfool_acc,
               train_input_grad_norm, train_df_loop, train_df_perturbation_norm, train_df_grad_norm, train_cos,
-              test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc,
-              test_pgd_loss, test_pgd_acc, test_deepfool_loss, test_deepfool_acc,
+              test_clean_loss, test_clean_acc, test_deepfool_loss, test_deepfool_acc,
               test_input_grad_norm, test_df_loop, test_df_perturbation_norm, test_df_grad_norm, test_cos):
     writer.add_scalars('loss',
-                       {'train_fgsm': train_fgsm_loss, 'train_pgd': train_pgd_loss,
+                       {'train_clean': train_loss,
                         'train_deepfool': train_deepfool_loss,
-                        'test_clean': test_clean_loss, 'test_fgsm': test_fgsm_loss, 'test_pgd': test_pgd_loss,
+                        'test_clean': test_clean_loss,
                         'test_deepfool': test_deepfool_loss},
                        epoch + 1)
     writer.add_scalars('accuracy',
-                       {'train_fgsm': train_fgsm_acc, 'train_pgd': train_pgd_acc, 'train_deepfool': train_deepfool_acc,
-                        'test_clean': test_clean_acc, 'test_fgsm': test_fgsm_acc, 'test_pgd': test_pgd_acc,
+                       {'train_clean': train_acc,
+                        'train_deepfool': train_deepfool_acc,
+                        'test_clean': test_clean_acc,
                         'test_deepfool': test_deepfool_acc},
                        epoch + 1)
     train_inputs_grad_norm_mean, train_inputs_grad_norm_median, train_inputs_grad_norm_std = train_input_grad_norm.mean(), np.median(
@@ -217,13 +226,119 @@ def tb_writer(writer, epoch, lr, train_fgsm_loss, train_fgsm_acc,
                        {'train_clean': train_inputs_grad_norm_median, 'train_df': train_df_grad_norm_median,
                         'test_clean_inputs': test_inputs_grad_norm_median, 'test_df': test_df_grad_norm_median},
                        epoch + 1)
-    writer.add_scalars('grad_norm_std', {'train_clean': train_inputs_grad_norm_std, 'train_df': train_df_grad_norm_std,
-                                         'test_clean_inputs': test_inputs_grad_norm_std,
-                                         'test_df': test_df_grad_norm_std},
+    writer.add_scalars('grad_norm_std',
+                       {'train_clean': train_inputs_grad_norm_std, 'train_df': train_df_grad_norm_std,
+                        'test_clean_inputs': test_inputs_grad_norm_std,
+                        'test_df': test_df_grad_norm_std},
                        epoch + 1)
     writer.add_scalars('cos_similarity_mean', {'train': train_cos_mean, 'test': test_cos_mean}, epoch + 1)
     writer.add_scalars('cos_similarity_median', {'train': train_cos_median, 'test': test_cos_median}, epoch + 1)
     writer.add_scalars('cos_similarity_std', {'train': train_cos_std, 'test': test_cos_std}, epoch + 1)
+    writer.add_scalar('learning rate', lr, epoch + 1)
+
+    train_df_loop_mean, train_df_loop_median, train_df_loop_std = train_df_loop.mean(), np.median(
+        train_df_loop), train_df_loop.std()
+    train_df_perturbation_mean, train_df_perturbation_median, train_df_perturbation_std = train_df_perturbation_norm.mean(), np.median(
+        train_df_perturbation_norm), train_df_perturbation_norm.std()
+
+    test_df_loop_mean, test_df_loop_median, test_df_loop_std = test_df_loop.mean(), np.median(
+        test_df_loop), test_df_loop.std()
+    test_df_perturbation_mean, test_df_perturbation_median, test_df_perturbation_std = test_df_perturbation_norm.mean(), np.median(
+        test_df_perturbation_norm), test_df_perturbation_norm.std()
+    writer.add_scalars('df_loop_mean', {'train': train_df_loop_mean, 'test': test_df_loop_mean}, epoch + 1)
+    writer.add_scalars('df_loop_median', {'train': train_df_loop_median, 'test': test_df_loop_median}, epoch + 1)
+    writer.add_scalars('df_loop_std', {'train': train_df_loop_std, 'test': test_df_loop_std}, epoch + 1)
+    writer.add_scalars('df_perturbation_mean',
+                       {'train': train_df_perturbation_mean, 'test': test_df_perturbation_mean},
+                       epoch + 1)
+    writer.add_scalars('df_perturbation_median',
+                       {'train': train_df_perturbation_median, 'test': test_df_perturbation_median}, epoch + 1)
+    writer.add_scalars('df_perturbation_std',
+                       {'train': train_df_perturbation_std, 'test': test_df_perturbation_std},
+                       epoch + 1)
+
+
+def tb_writer(writer, epoch, lr, train_loss, train_acc, train_fgsm_loss, train_fgsm_acc,
+              train_pgd_loss, train_pgd_acc, train_deepfool_loss, train_deepfool_acc,
+              train_input_grad_norm, train_df_loop, train_df_perturbation_norm, train_df_grad_norm,
+              train_fgsm_grad_norm, train_pgd_grad_norm, train_cos_clean_df, train_cos_clean_fgsm, train_cos_clean_pgd, train_cos_fgsm_pgd,
+              test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc,
+              test_pgd_loss, test_pgd_acc, test_deepfool_loss, test_deepfool_acc,
+              test_input_grad_norm, test_df_loop, test_df_perturbation_norm, test_df_grad_norm, test_fgsm_grad_norm, test_pgd_grad_norm, test_cos_clean_df, test_cos_clean_fgsm, test_cos_clean_pgd, test_cos_fgsm_pgd):
+    writer.add_scalars('loss',
+                       {'train': train_loss, 'train_fgsm': train_fgsm_loss, 'train_pgd': train_pgd_loss,
+                        'train_deepfool': train_deepfool_loss,
+                        'test_clean': test_clean_loss, 'test_fgsm': test_fgsm_loss, 'test_pgd': test_pgd_loss,
+                        'test_deepfool': test_deepfool_loss},
+                       epoch + 1)
+    writer.add_scalars('accuracy',
+                       {'train': train_acc, 'train_fgsm': train_fgsm_acc, 'train_pgd': train_pgd_acc, 'train_deepfool': train_deepfool_acc,
+                        'test_clean': test_clean_acc, 'test_fgsm': test_fgsm_acc, 'test_pgd': test_pgd_acc,
+                        'test_deepfool': test_deepfool_acc},
+                       epoch + 1)
+    train_inputs_grad_norm_mean, train_inputs_grad_norm_median, train_inputs_grad_norm_std = train_input_grad_norm.mean(), np.median(
+        train_input_grad_norm), train_input_grad_norm.std()
+    train_df_grad_norm_mean, train_df_grad_norm_median, train_df_grad_norm_std = train_df_grad_norm.mean(), np.median(
+        train_df_grad_norm), train_df_grad_norm.std()
+    train_fgsm_grad_norm_mean, train_fgsm_grad_norm_median, train_fgsm_grad_norm_std = train_fgsm_grad_norm.mean(), np.median(
+        train_fgsm_grad_norm), train_fgsm_grad_norm.std()
+    train_pgd_grad_norm_mean, train_pgd_grad_norm_median, train_pgd_grad_norm_std = train_pgd_grad_norm.mean(), np.median(
+        train_pgd_grad_norm), train_pgd_grad_norm.std()
+    train_cos_clean_df_mean, train_cos_clean_df_median, train_cos_clean_df_std = train_cos_clean_df.mean(), np.median(
+        train_cos_clean_df), train_cos_clean_df.std()
+    train_cos_clean_fgsm_mean, train_cos_clean_fgsm_median, train_cos_clean_fgsm_std = train_cos_clean_fgsm.mean(), np.median(
+        train_cos_clean_fgsm), train_cos_clean_fgsm.std()
+    train_cos_clean_pgd_mean, train_cos_clean_pgd_median, train_cos_clean_pgd_std = train_cos_clean_pgd.mean(), np.median(
+        train_cos_clean_pgd), train_cos_clean_pgd.std()
+    train_cos_fgsm_pgd_mean, train_cos_fgsm_pgd_median, train_cos_fgsm_pgd_std = train_cos_fgsm_pgd.mean(), np.median(
+        train_cos_fgsm_pgd), train_cos_fgsm_pgd.std()
+
+
+    test_inputs_grad_norm_mean, test_inputs_grad_norm_median, test_inputs_grad_norm_std = test_input_grad_norm.mean(), np.median(
+        test_input_grad_norm), test_input_grad_norm.std()
+    test_df_grad_norm_mean, test_df_grad_norm_median, test_df_grad_norm_std = test_df_grad_norm.mean(), np.median(
+        test_df_grad_norm), test_df_grad_norm.std()
+    test_fgsm_grad_norm_mean, test_fgsm_grad_norm_median, test_fgsm_grad_norm_std = test_fgsm_grad_norm.mean(), np.median(
+        test_fgsm_grad_norm), test_fgsm_grad_norm.std()
+    test_pgd_grad_norm_mean, test_pgd_grad_norm_median, test_pgd_grad_norm_std = test_pgd_grad_norm.mean(), np.median(
+        test_pgd_grad_norm), test_pgd_grad_norm.std()
+    test_cos_clean_df_mean, test_cos_clean_df_median, test_cos_clean_df_std = test_cos_clean_df.mean(), np.median(test_cos_clean_df), test_cos_clean_df.std()
+    test_cos_clean_fgsm_mean, test_cos_clean_fgsm_median, test_cos_clean_fgsm_std = test_cos_clean_fgsm.mean(), np.median(
+        test_cos_clean_fgsm), test_cos_clean_fgsm.std()
+    test_cos_clean_pgd_mean, test_cos_clean_pgd_median, test_cos_clean_pgd_std = test_cos_clean_pgd.mean(), np.median(
+        test_cos_clean_pgd), test_cos_clean_pgd.std()
+    test_cos_fgsm_pgd_mean, test_cos_fgsm_pgd_median, test_cos_fgsm_pgd_std = test_cos_fgsm_pgd.mean(), np.median(
+        test_cos_fgsm_pgd), test_cos_fgsm_pgd.std()
+
+    writer.add_scalars('grad_norm_mean',
+                       {'train_clean': train_inputs_grad_norm_mean, 'train_df': train_df_grad_norm_mean,
+                        'train_fgsm': train_fgsm_grad_norm_mean, 'train_pgd': train_pgd_grad_norm_mean,
+                        'test_clean': test_inputs_grad_norm_mean, 'test_df': test_df_grad_norm_mean,
+                        'test_fgsm': test_fgsm_grad_norm_mean, 'test_pgd': test_pgd_grad_norm_mean}, epoch + 1)
+    writer.add_scalars('grad_norm_median',
+                       {'train_clean': train_inputs_grad_norm_median, 'train_df': train_df_grad_norm_median,
+                        'train_fgsm': train_fgsm_grad_norm_median, 'train_pgd': train_pgd_grad_norm_median,
+                        'test_clean_inputs': test_inputs_grad_norm_median, 'test_df': test_df_grad_norm_median,
+                        'test_fgsm': test_fgsm_grad_norm_median, 'test_pgd': test_pgd_grad_norm_median},
+                       epoch + 1)
+    writer.add_scalars('grad_norm_std',
+                       {'train_clean': train_inputs_grad_norm_std, 'train_df': train_df_grad_norm_std,
+                        'train_fgsm': train_fgsm_grad_norm_std, 'train_pgd': train_pgd_grad_norm_std,
+                        'test_clean_inputs': test_inputs_grad_norm_std, 'test_df': test_df_grad_norm_std,
+                        'test_fgsm': test_fgsm_grad_norm_std, 'test_pgd': test_pgd_grad_norm_std},
+                       epoch + 1)
+    writer.add_scalars('cos_similarity_mean',
+                       {'train_clean_df': train_cos_clean_df_mean, 'train_clean_fgsm': train_cos_clean_fgsm_mean, 'train_clean_pgd': train_cos_clean_pgd_mean, 'train_fgsm_pgd': train_cos_fgsm_pgd_mean,
+                        'test_clean_df': test_cos_clean_df_mean, 'test_clean_fgsm': test_cos_clean_fgsm_mean, 'test_clean_pgd': test_cos_clean_pgd_mean, 'test_fgsm_pgd': test_cos_fgsm_pgd_mean},
+                       epoch + 1)
+    writer.add_scalars('cos_similarity_median',
+                       {'train_clean_df': train_cos_clean_df_median, 'train_clean_fgsm': train_cos_clean_fgsm_median, 'train_clean_pgd': train_cos_clean_pgd_median, 'train_fgsm_pgd': train_cos_fgsm_pgd_median,
+                        'test_clean_df': test_cos_clean_df_median, 'test_clean_fgsm': test_cos_clean_fgsm_median, 'test_clean_pgd': test_cos_clean_pgd_median, 'test_fgsm_pgd': test_cos_fgsm_pgd_median},
+                       epoch + 1)
+    writer.add_scalars('cos_similarity_std',
+                       {'train_clean_df': train_cos_clean_df_std, 'train_clean_fgsm': train_cos_clean_fgsm_std, 'train_clean_pgd': train_cos_clean_pgd_std, 'train_fgsm_pgd': train_cos_fgsm_pgd_std,
+                        'test_clean_df': test_cos_clean_df_std, 'test_clean_fgsm': test_cos_clean_fgsm_std, 'test_clean_pgd': test_cos_clean_pgd_std, 'test_fgsm_pgd': test_cos_fgsm_pgd_std },
+                       epoch + 1)
     writer.add_scalar('learning rate', lr, epoch + 1)
 
     train_df_loop_mean, train_df_loop_median, train_df_loop_std = train_df_loop.mean(), np.median(

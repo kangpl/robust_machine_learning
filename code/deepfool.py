@@ -3,10 +3,9 @@ import copy
 from utils.util import *
 
 
-def deepfool(model, inputs, target, num_classes=2, overshoot=0.02, max_iter=50, device='cuda'):
+def deepfool(model, inputs, num_classes=2, overshoot=0.02, max_iter=50, device='cuda'):
     """
        :param inputs:
-       :param target:
        :param device:
        :param model: network (input: images, output: values of activation **BEFORE** softmax).
        :param num_classes: num_classes (limits the number of classes to test against, by default = 10)
@@ -14,6 +13,9 @@ def deepfool(model, inputs, target, num_classes=2, overshoot=0.02, max_iter=50, 
        :param max_iter: maximum number of iterations for deepfool (default = 50)
        :return: minimal perturbation that fools the classifier, number of iterations that it required, new estimated_label and perturbed image
     """
+    output = model(inputs)
+    I = torch.flip(output.argsort(), (-1,))[:, :num_classes]
+    labels = I[:, 0]
 
     w = torch.zeros(inputs.shape).to(device)
     r_tot = torch.zeros(inputs.shape).to(device)
@@ -22,15 +24,13 @@ def deepfool(model, inputs, target, num_classes=2, overshoot=0.02, max_iter=50, 
     pert_inputs = copy.deepcopy(inputs).requires_grad_()
     while loop_i.max() < max_iter:
         output = model(pert_inputs)
-        index = torch.where(output.max(1)[1] == target)[0]
-        if loop_i.max() == 0:
-            I = torch.flip(output.argsort(), (-1,))[:, :num_classes]
+        index = torch.where(output.max(1)[1] == labels)[0]
         if len(index) == 0:
             break
 
-        pert = torch.full((target.shape[0],), float("Inf")).to(device)
+        pert = torch.full((labels.shape[0],), float("Inf")).to(device)
 
-        ori_t = output.gather(1, target.view(-1, 1))
+        ori_t = output.gather(1, labels.view(-1, 1))
         ori_grad = torch.autograd.grad(ori_t.sum(), pert_inputs, create_graph=True)[0].detach()
 
         for k in range(1, num_classes):
