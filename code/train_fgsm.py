@@ -35,6 +35,8 @@ def get_args():
     parser.add_argument('--eval_pgd_alpha', default=2, type=float)
     parser.add_argument('--eval_pgd_attack_iters', default=10, type=int)
     parser.add_argument('--eval_pgd_restarts', default=1, type=int)
+    parser.add_argument('--eval_deepfool_classes_num', default=2, type=int)
+    parser.add_argument('--eval_deepfool_max_iter', default=50, type=int)
 
     parser.add_argument('--finetune', action='store_true', help='finetune the pre-trained model with adversarial '
                                                                 'samples or regularization')
@@ -75,6 +77,7 @@ def train(args, model, trainloader, optimizer, criterion):
 def eval(args, model, testloader, criterion):
     model.eval()
     test_clean_loss, test_clean_correct, test_fgsm_loss, test_fgsm_correct, test_pgd_loss, test_pgd_correct, test_total = 0, 0, 0, 0, 0, 0, 0
+    test_df_loop, test_df_perturbation_norm = 0, 0
     for batch_idx, (inputs, targets) in enumerate(testloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
@@ -95,6 +98,9 @@ def eval(args, model, testloader, criterion):
         pgd_outputs = model(clamp(inputs + pgd_delta, lower_limit, upper_limit))
         pgd_loss = criterion(pgd_outputs, targets)
 
+        # deepfool
+        pert_inputs, loop, perturbation = deepfool(model, inputs, num_classes=args.eval_deepfool_classes_num,
+                                                   max_iter=args.eval_deepfool_max_iter, device=args.device)
         test_clean_loss += clean_loss.item() * targets.size(0)
         test_clean_correct += (clean_outputs.max(dim=1)[1] == targets).sum().item()
         test_fgsm_loss += fgsm_loss.item() * targets.size(0)
@@ -102,13 +108,17 @@ def eval(args, model, testloader, criterion):
         test_pgd_loss += pgd_loss.item() * targets.size(0)
         test_pgd_correct += (pgd_outputs.max(dim=1)[1] == targets).sum().item()
         test_total += targets.size(0)
+        test_df_loop += loop.sum().item()
+        test_df_perturbation_norm += perturbation.sum().item()
+
     return test_clean_loss / test_total, 100. * test_clean_correct / test_total, \
            test_fgsm_loss / test_total, 100. * test_fgsm_correct / test_total, \
-           test_pgd_loss / test_total, 100. * test_pgd_correct / test_total
+           test_pgd_loss / test_total, 100. * test_pgd_correct / test_total, \
+           test_df_loop / test_total, test_df_perturbation_norm / test_total
 
 
 def tb_writer(writer, epoch, lr, train_clean_loss, train_clean_acc, train_fgsm_loss, train_fgsm_acc,
-              test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_pgd_loss, test_pgd_acc):
+              test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_pgd_loss, test_pgd_acc, test_df_loop, test_df_perturbation_norm):
     writer.add_scalars('loss',
                        {'train_clean': train_clean_loss, 'train_fgsm': train_fgsm_loss,
                         'test_clean': test_clean_loss, 'test_fgsm': test_fgsm_loss, 'test_pgd': test_pgd_loss}, epoch)
@@ -116,6 +126,8 @@ def tb_writer(writer, epoch, lr, train_clean_loss, train_clean_acc, train_fgsm_l
                        {'train_clean': train_clean_acc, 'train_fgsm': train_fgsm_acc,
                         'test_clean': test_clean_acc, 'test_fgsm': test_fgsm_acc, 'test_pgd': test_pgd_acc}, epoch)
     writer.add_scalar('learning rate', lr, epoch)
+    writer.add_scalar('test_df_loop', test_df_loop, epoch)
+    writer.add_scalar('test_df_perturbation_norm', test_df_perturbation_norm, epoch)
 
 
 def eval_init(args, writer, logger, model, trainloader, testloader, criterion, opt):
@@ -138,10 +150,10 @@ def eval_init(args, writer, logger, model, trainloader, testloader, criterion, o
         train_clean_correct += (clean_outputs.max(dim=1)[1] == targets).sum().item()
         train_total += targets.size(0)
 
-    test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_pgd_loss, test_pgd_acc = eval(args, model, testloader, criterion)
+    test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_pgd_loss, test_pgd_acc, test_df_loop, test_df_perturbation_norm = eval(args, model, testloader, criterion)
     tb_writer(writer, 0, opt.param_groups[0]['lr'],
               train_clean_loss / train_total, 100. * train_clean_correct / train_total, train_fgsm_loss / train_total, 100. * train_fgsm_correct / train_total,
-              test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_pgd_loss, test_pgd_acc)
+              test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_pgd_loss, test_pgd_acc, test_df_loop, test_df_perturbation_norm)
     logger.info(
         '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f',
         0, -1, -1, opt.param_groups[0]['lr'], train_fgsm_loss / train_total, 100. * train_fgsm_correct / train_total, test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc)
@@ -225,12 +237,12 @@ def main():
         train_clean_loss, train_clean_acc, train_fgsm_loss, train_fgsm_acc = train(args, model, trainloader, optimizer, criterion)
         train_time = time.time()
 
-        test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_pgd_loss, test_pgd_acc = eval(args, model, testloader, criterion)
+        test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_pgd_loss, test_pgd_acc, test_df_loop, test_df_perturbation_norm = eval(args, model, testloader, criterion)
         test_time = time.time()
 
         tb_writer(writer, epoch+1, optimizer.param_groups[0]['lr'],
                   train_clean_loss, train_clean_acc, train_fgsm_loss, train_fgsm_acc,
-                  test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_pgd_loss, test_pgd_acc)
+                  test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_pgd_loss, test_pgd_acc, test_df_loop, test_df_perturbation_norm)
         logger.info(
             '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f',
             epoch+1, train_time-start_time, test_time-train_time, optimizer.param_groups[0]['lr'],
