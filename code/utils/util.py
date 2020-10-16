@@ -8,7 +8,6 @@ import numpy as np
 import torch
 from torchvision import datasets, transforms
 import torch.nn.functional as F
-from deepfool import deepfool
 
 cifar10_mean = (0.4914, 0.4822, 0.4465)
 cifar10_std = (0.2470, 0.2435, 0.2616)
@@ -390,58 +389,58 @@ def log_resumed_info(checkpoint, logger):
         f"{resumed_test_attack_loss}, Test Attack Acc {resumed_test_attack_acc}")
 
 
-def evaluation(args, model, inputs, targets, metrics, dataset='train'):
-    # clean
-    clean_grad, clean_outputs, clean_loss = get_input_grad_v2(model, inputs, targets)
-    clean_grad_norm = clean_grad.view(clean_grad.shape[0], -1).norm(dim=1)
-
-    # fgsm
-    fgsm_delta = attack_pgd(model, inputs, targets, args.test_epsilon, args.eval_fgsm_alpha, 1, 1, args.device).detach()
-    fgsm_grad, fgsm_outputs, fgsm_loss = get_input_grad_v2(model,
-                                                           clamp(inputs + fgsm_delta, lower_limit, upper_limit),
-                                                           targets)
-    fgsm_grad_norm = fgsm_grad.view(fgsm_grad.shape[0], -1).norm(dim=1)
-
-    # pgd
-    pgd_delta = attack_pgd(model, inputs, targets, args.eval_epsilon, args.eval_pgd_alpha,
-                           args.eval_pgd_attack_iters, args.eval_pgd_restarts, args.device,
-                           early_stop=True).detach()
-    pgd_grad, pgd_outputs, pgd_loss = get_input_grad_v2(model, clamp(inputs + pgd_delta, lower_limit, upper_limit),
-                                                        targets)
-    pgd_grad_norm = pgd_grad.view(pgd_grad.shape[0], -1).norm(dim=1)
-
-    # deepfool attack
-    pert_inputs, loop, perturbation = deepfool(model, inputs, num_classes=args.eval_deepfool_classes_num,
-                                               max_iter=args.eval_deepfool_max_iter, device=args.device)
-    deepfool_grad, deepfool_outputs, deepfool_loss = get_input_grad_v2(model, pert_inputs, targets)
-    deepfool_grad_norm = deepfool_grad.view(deepfool_grad.shape[0], -1).norm(dim=1)
-
-    # calculate cosine
-    cos_clean_df = cal_cos_similarity(clean_grad, deepfool_grad, clean_grad_norm, deepfool_grad_norm)
-    cos_clean_fgsm = cal_cos_similarity(clean_grad, fgsm_grad, clean_grad_norm, fgsm_grad_norm)
-    cos_clean_pgd = cal_cos_similarity(clean_grad, pgd_grad, clean_grad_norm, pgd_grad_norm)
-    cos_fgsm_pgd = cal_cos_similarity(fgsm_grad, pgd_grad, fgsm_grad_norm, pgd_grad_norm)
-
-
-    metrics[dataset + '_clean_loss'] += clean_loss.item() * targets.size(0)
-    metrics[dataset + '_clean_correct'] += (clean_outputs.max(1)[1] == targets).sum().item()
-    metrics[dataset + '_clean_grad_norm'].append(clean_grad_norm.cpu().numpy())
-
-    metrics[dataset + '_fgsm_loss'] += fgsm_loss.item() * targets.size(0)
-    metrics[dataset + '_fgsm_correct'] += (fgsm_outputs.max(1)[1] == targets).sum().item()
-    metrics[dataset + '_fgsm_grad_norm'].append(fgsm_grad_norm.cpu().numpy())
-
-    metrics[dataset + '_pgd_loss'] += pgd_loss.item() * targets.size(0)
-    metrics[dataset + '_pgd_correct'] += (pgd_outputs.max(dim=1)[1] == targets).sum().item()
-    metrics[dataset + '_pgd_grad_norm'].append(pgd_grad_norm.cpu().numpy())
-
-    metrics[dataset + '_df_loop'].append(loop.cpu().numpy())
-    metrics[dataset + '_df_perturbation_norm'].append(perturbation.cpu().numpy())
-    metrics[dataset + '_df_grad_norm'].append(deepfool_grad_norm.cpu().numpy())
-
-    metrics[dataset + '_cos_clean_df'].append(cos_clean_df.cpu().numpy())
-    metrics[dataset + '_cos_clean_fgsm'].append(cos_clean_fgsm.cpu().numpy())
-    metrics[dataset + '_cos_clean_pgd'].append(cos_clean_pgd.cpu().numpy())
-    metrics[dataset + '_cos_fgsm_pgd'].append(cos_fgsm_pgd.cpu().numpy())
-
-    metrics[dataset + '_total'] += targets.size(0)
+# def evaluation(args, model, inputs, targets, metrics, dataset='train'):
+#     # clean
+#     clean_grad, clean_outputs, clean_loss = get_input_grad_v2(model, inputs, targets)
+#     clean_grad_norm = clean_grad.view(clean_grad.shape[0], -1).norm(dim=1)
+#
+#     # fgsm
+#     fgsm_delta = attack_pgd(model, inputs, targets, args.test_epsilon, args.eval_fgsm_alpha, 1, 1, args.device).detach()
+#     fgsm_grad, fgsm_outputs, fgsm_loss = get_input_grad_v2(model,
+#                                                            clamp(inputs + fgsm_delta, lower_limit, upper_limit),
+#                                                            targets)
+#     fgsm_grad_norm = fgsm_grad.view(fgsm_grad.shape[0], -1).norm(dim=1)
+#
+#     # pgd
+#     pgd_delta = attack_pgd(model, inputs, targets, args.eval_epsilon, args.eval_pgd_alpha,
+#                            args.eval_pgd_attack_iters, args.eval_pgd_restarts, args.device,
+#                            early_stop=True).detach()
+#     pgd_grad, pgd_outputs, pgd_loss = get_input_grad_v2(model, clamp(inputs + pgd_delta, lower_limit, upper_limit),
+#                                                         targets)
+#     pgd_grad_norm = pgd_grad.view(pgd_grad.shape[0], -1).norm(dim=1)
+#
+#     # deepfool attack
+#     pert_inputs, loop, perturbation = deepfool(model, inputs, num_classes=args.eval_deepfool_classes_num,
+#                                                max_iter=args.eval_deepfool_max_iter, device=args.device)
+#     deepfool_grad, deepfool_outputs, deepfool_loss = get_input_grad_v2(model, pert_inputs, targets)
+#     deepfool_grad_norm = deepfool_grad.view(deepfool_grad.shape[0], -1).norm(dim=1)
+#
+#     # calculate cosine
+#     cos_clean_df = cal_cos_similarity(clean_grad, deepfool_grad, clean_grad_norm, deepfool_grad_norm)
+#     cos_clean_fgsm = cal_cos_similarity(clean_grad, fgsm_grad, clean_grad_norm, fgsm_grad_norm)
+#     cos_clean_pgd = cal_cos_similarity(clean_grad, pgd_grad, clean_grad_norm, pgd_grad_norm)
+#     cos_fgsm_pgd = cal_cos_similarity(fgsm_grad, pgd_grad, fgsm_grad_norm, pgd_grad_norm)
+#
+#
+#     metrics[dataset + '_clean_loss'] += clean_loss.item() * targets.size(0)
+#     metrics[dataset + '_clean_correct'] += (clean_outputs.max(1)[1] == targets).sum().item()
+#     metrics[dataset + '_clean_grad_norm'].append(clean_grad_norm.cpu().numpy())
+#
+#     metrics[dataset + '_fgsm_loss'] += fgsm_loss.item() * targets.size(0)
+#     metrics[dataset + '_fgsm_correct'] += (fgsm_outputs.max(1)[1] == targets).sum().item()
+#     metrics[dataset + '_fgsm_grad_norm'].append(fgsm_grad_norm.cpu().numpy())
+#
+#     metrics[dataset + '_pgd_loss'] += pgd_loss.item() * targets.size(0)
+#     metrics[dataset + '_pgd_correct'] += (pgd_outputs.max(dim=1)[1] == targets).sum().item()
+#     metrics[dataset + '_pgd_grad_norm'].append(pgd_grad_norm.cpu().numpy())
+#
+#     metrics[dataset + '_df_loop'].append(loop.cpu().numpy())
+#     metrics[dataset + '_df_perturbation_norm'].append(perturbation.cpu().numpy())
+#     metrics[dataset + '_df_grad_norm'].append(deepfool_grad_norm.cpu().numpy())
+#
+#     metrics[dataset + '_cos_clean_df'].append(cos_clean_df.cpu().numpy())
+#     metrics[dataset + '_cos_clean_fgsm'].append(cos_clean_fgsm.cpu().numpy())
+#     metrics[dataset + '_cos_clean_pgd'].append(cos_clean_pgd.cpu().numpy())
+#     metrics[dataset + '_cos_fgsm_pgd'].append(cos_fgsm_pgd.cpu().numpy())
+#
+#     metrics[dataset + '_total'] += targets.size(0)

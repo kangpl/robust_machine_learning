@@ -1,10 +1,9 @@
 import copy
 
-import numpy as np
-import torch
+from utils.util import *
 
 
-def deepfool(model, inputs, num_classes=2, overshoot=0.02, max_iter=50, device='cuda'):
+def deepfool(model, inputs, epsilon, num_classes=2, overshoot=0.02, max_iter=50, alpha=1, device='cuda', norm_rs='l_2', norm_dist='l_2', random_start=False, early_stop=False):
     """
        :param inputs:
        :param device:
@@ -14,18 +13,34 @@ def deepfool(model, inputs, num_classes=2, overshoot=0.02, max_iter=50, device='
        :param max_iter: maximum number of iterations for deepfool (default = 50)
        :return: minimal perturbation that fools the classifier, number of iterations that it required, new estimated_label and perturbed image
     """
-    output = model(inputs)
-    I = torch.flip(output.argsort(), (-1,))[:, :num_classes]
-    labels = I[:, 0]
-
     w = torch.zeros(inputs.shape).to(device)
     r_tot = torch.zeros(inputs.shape).to(device)
 
+    if random_start:
+        if norm_rs == 'l_2':
+            r_tot.normal_()
+            n = r_tot.view(r_tot.size(0), -1).norm(dim=1)[:, None, None, None]
+            r = torch.zeros_like(n).uniform_(0, 1)
+            r_tot *= r / n * epsilon
+        elif norm_rs == 'l_inf':
+            for i in range(len(epsilon)):
+                r_tot[:, i, :, :].uniform_(-epsilon[i][0][0].item(), epsilon[i][0][0].item())
+        else:
+            raise ValueError
+        r_tot = clamp(r_tot, lower_limit - inputs, upper_limit - inputs)
+        
+    output = model(inputs + r_tot)
+    I = torch.flip(output.argsort(), (-1,))[:, :num_classes]
+    labels = I[:, 0]
+
+    pert_inputs = (copy.deepcopy(inputs) + r_tot).requires_grad_()
     loop_i = torch.zeros(inputs.shape[0]).to(device)
-    pert_inputs = copy.deepcopy(inputs).requires_grad_()
     while loop_i.max() < max_iter:
         output = model(pert_inputs)
-        index = torch.where(output.max(1)[1] == labels)[0]
+        if early_stop:
+            index = torch.where(output.max(1)[1] == labels)[0]
+        else:
+            index = torch.tensor(range(len(output))).to(device)
         if len(index) == 0:
             break
 
@@ -42,7 +57,12 @@ def deepfool(model, inputs, num_classes=2, overshoot=0.02, max_iter=50, device='
             w_k = cur_grad - ori_grad
             f_k = (cur_t - ori_t).detach().flatten()
 
-            pert_k = abs(f_k) / torch.norm(w_k.view(w_k.shape[0], -1), dim=-1)
+            if norm_dist == 'l_2':
+                pert_k = abs(f_k) / torch.norm(w_k.view(w_k.shape[0], -1), p=2, dim=1)
+            elif norm_dist == 'l_inf':
+                pert_k = abs(f_k) / torch.norm(w_k.view(w_k.shape[0], -1), p=1, dim=1)
+            else:
+                raise ValueError
 
             # determine which w_k to use
             valid_index = torch.where(pert_k < pert)[0]
@@ -52,11 +72,18 @@ def deepfool(model, inputs, num_classes=2, overshoot=0.02, max_iter=50, device='
 
         # compute r_i and r_tot
         # Added 1e-4 for numerical stability
-        r_i = (pert[index, None, None, None] + 1e-4) * w[index] / torch.norm(w[index].view(w[index].shape[0], -1),
-                                                                             dim=1).view(-1, 1, 1, 1)
+        if norm_dist == 'l_2':
+            r_i = (pert[index, None, None, None] + 1e-8) * w[index] / torch.norm(w[index].view(w[index].shape[0], -1),
+                                                                                 dim=1).view(-1, 1, 1, 1)
+        elif norm_dist == 'l_inf':
+            r_i = (pert[index, None, None, None] + 1e-8) * (w[index].sign())
+        else:
+            raise ValueError
+
         r_tot[index] = r_tot[index] + r_i
         pert_inputs = (inputs + (1 + overshoot) * r_tot).requires_grad_()
         loop_i[index] += 1
 
-    r_tot = (1 + overshoot) * r_tot
+    r_tot = alpha * (1 + overshoot) * r_tot
+    pert_inputs = (inputs + r_tot)
     return pert_inputs.detach(), loop_i, torch.norm(r_tot.view(r_tot.shape[0], -1), dim=1)
