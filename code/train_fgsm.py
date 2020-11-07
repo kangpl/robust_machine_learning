@@ -240,6 +240,8 @@ def main():
             train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc)
         if args.lr_schedule == 'multistep':
             step_lr_scheduler.step()
+        # save_checkpoint(model, epoch+1, train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc, test_pgd_loss,
+        #                 test_pgd_acc, os.path.join(CHECKPOINT_DIR, args.exp_name + f'_{epoch}.pth'))
 
     writer.close()
 
