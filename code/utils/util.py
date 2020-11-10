@@ -11,6 +11,7 @@ import torch.nn.functional as F
 
 cifar10_mean = (0.4914, 0.4822, 0.4465)
 cifar10_std = (0.2470, 0.2435, 0.2616)
+# cifar10_std = (0.2023, 0.1994, 0.2010)
 
 mu = torch.tensor(cifar10_mean).view(3, 1, 1).cuda()
 std = torch.tensor(cifar10_std).view(3, 1, 1).cuda()

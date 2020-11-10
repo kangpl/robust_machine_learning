@@ -3,7 +3,7 @@ import copy
 from utils.util import *
 
 
-def deepfool(model, inputs, num_classes=2, overshoot=0.02, max_iter=50, norm_dist='l_2', device='cuda', random_start=False, norm_rs='l_2', epsilon=-1, early_stop=False, model_in_eval=False, alpha=1):
+def deepfool(model, inputs, num_classes=2, overshoot=0.02, max_iter=50, norm_dist='l_2', device='cuda', random_start=False, norm_rs='l_2', epsilon=-1, early_stop=False, model_in_eval=False, alpha=1, df_clamp=False):
     """
        :param inputs:
        :param device:
@@ -76,18 +76,20 @@ def deepfool(model, inputs, num_classes=2, overshoot=0.02, max_iter=50, norm_dis
         # compute r_i and r_tot
         # Added 1e-4 for numerical stability
         if norm_dist == 'l_2':
-            r_i = (pert[index, None, None, None] + 1e-9) * w[index] / torch.norm(w[index].view(w[index].shape[0], -1),
+            r_i = (pert[index, None, None, None] + 1e-4) * w[index] / torch.norm(w[index].view(w[index].shape[0], -1),
                                                                                  dim=1).view(-1, 1, 1, 1)
         elif norm_dist == 'l_inf':
-            r_i = (pert[index, None, None, None] + 1e-9) * (w[index].sign() + 1e-9)
+            r_i = (pert[index, None, None, None] + 1e-9) * w[index].sign()
         else:
             raise ValueError
 
         r_tot[index] = r_tot[index] + r_i
         pert_inputs = (inputs + (1 + overshoot) * r_tot).requires_grad_()
         loop_i[index] += 1
-
-    r_tot = alpha * (1 + overshoot) * r_tot
+    if df_clamp:
+        r_tot = clamp(alpha * (1 + overshoot) * r_tot, -epsilon, epsilon)
+    else:
+        r_tot = alpha * (1 + overshoot) * r_tot
     pert_inputs = (inputs + r_tot)
     return pert_inputs.detach(), loop_i, r_tot
 
