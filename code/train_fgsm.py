@@ -29,9 +29,11 @@ def get_args():
     parser.add_argument('--num_epochs', default=200, type=int)
 
     parser.add_argument('--epsilon', default=8, type=int)
-    parser.add_argument('--train_fgsm_alpha', default=10, type=float)
+    # parser.add_argument('--train_fgsm_alpha', default=10, type=float)
+    parser.add_argument('--train_fgsm_ratio', default=1, type=float)
     parser.add_argument('--train_random_start', action='store_true')
-    parser.add_argument('--eval_pgd_alpha', default=2, type=float)
+    # parser.add_argument('--eval_pgd_alpha', default=2, type=float)
+    parser.add_argument('--eval_pgd_ratio', default=0.25, type=float)
     parser.add_argument('--eval_pgd_attack_iters', default=10, type=int)
     parser.add_argument('--eval_pgd_restarts', default=1, type=int)
 
@@ -50,11 +52,22 @@ def train(args, model, trainloader, optimizer, criterion, step_lr_scheduler):
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
-        delta = attack_pgd(model, inputs, targets, args.epsilon, args.train_fgsm_alpha, 1, 1, args.device,
-                           random_start=args.train_random_start).detach()
-        delta_norm = delta.view(delta.shape[0], -1).norm(dim=1)
+        delta = torch.zeros_like(inputs).to(args.device)
+        if args.train_random_start:
+            for i in range(len(args.epsilon)):
+                delta[:, i, :, :].uniform_(-args.epsilon[i][0][0].item(), args.epsilon[i][0][0].item())
+            delta = clamp(delta, lower_limit - inputs, upper_limit - inputs)
+        delta.requires_grad = True
+        output = model(inputs + delta)
+        loss = F.cross_entropy(output, targets)
+        loss.backward()
+        grad = delta.grad.detach()
 
-        fgsm_outputs = model(clamp(inputs + delta, lower_limit, upper_limit))
+        fgsm_delta = clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), -args.epsilon, args.epsilon)
+        fgsm_delta = clamp(fgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
+        fgsm_delta_norm = fgsm_delta.view(fgsm_delta.shape[0], -1).norm(dim=1)
+
+        fgsm_outputs = model(inputs + fgsm_delta)
         fgsm_loss = criterion(fgsm_outputs, targets)
         optimizer.zero_grad()
         fgsm_loss.backward()
@@ -67,7 +80,7 @@ def train(args, model, trainloader, optimizer, criterion, step_lr_scheduler):
         train_fgsm_correct += (fgsm_outputs.max(dim=1)[1] == targets).sum().item()
         train_clean_loss += clean_loss.item() * targets.size(0)
         train_clean_correct += (clean_outputs.max(dim=1)[1] == targets).sum().item()
-        train_fgsm_delta_norm += delta_norm.sum().item()
+        train_fgsm_delta_norm += fgsm_delta_norm.sum().item()
         train_total += targets.size(0)
         if args.lr_schedule == 'cyclic':
             step_lr_scheduler.step()
@@ -86,7 +99,7 @@ def eval(args, model, testloader, criterion):
         clean_loss = criterion(clean_outputs, targets)
 
         # pgd
-        pgd_delta = attack_pgd(model, inputs, targets, args.epsilon, args.eval_pgd_alpha,
+        pgd_delta = attack_pgd(model, inputs, targets, args.epsilon, args.eval_pgd_ratio * args.epsilon,
                                args.eval_pgd_attack_iters, args.eval_pgd_restarts, args.device,
                                early_stop=True).detach()
         pgd_outputs = model(clamp(inputs + pgd_delta, lower_limit, upper_limit))
@@ -122,11 +135,22 @@ def eval_init(args, writer, logger, model, trainloader, testloader, criterion, o
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
-        delta = attack_pgd(model, inputs, targets, args.epsilon, args.train_fgsm_alpha, 1, 1, args.device,
-                           random_start=args.train_random_start).detach()
-        delta_norm = delta.view(delta.shape[0], -1).norm(dim=1)
+        delta = torch.zeros_like(inputs).to(args.device)
+        if args.train_random_start:
+            for i in range(len(args.epsilon)):
+                delta[:, i, :, :].uniform_(-args.epsilon[i][0][0].item(), args.epsilon[i][0][0].item())
+            delta = clamp(delta, lower_limit - inputs, upper_limit - inputs)
+        delta.requires_grad = True
+        output = model(inputs + delta)
+        loss = F.cross_entropy(output, targets)
+        loss.backward()
+        grad = delta.grad.detach()
 
-        fgsm_outputs = model(clamp(inputs + delta, lower_limit, upper_limit))
+        fgsm_delta = clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), -args.epsilon, args.epsilon)
+        fgsm_delta = clamp(fgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
+        fgsm_delta_norm = fgsm_delta.view(fgsm_delta.shape[0], -1).norm(dim=1)
+
+        fgsm_outputs = model(inputs + fgsm_delta)
         fgsm_loss = criterion(fgsm_outputs, targets)
 
         clean_outputs = model(inputs)
@@ -136,7 +160,7 @@ def eval_init(args, writer, logger, model, trainloader, testloader, criterion, o
         train_fgsm_correct += (fgsm_outputs.max(dim=1)[1] == targets).sum().item()
         train_clean_loss += clean_loss.item() * targets.size(0)
         train_clean_correct += (clean_outputs.max(dim=1)[1] == targets).sum().item()
-        train_fgsm_delta_norm += delta_norm.sum().item()
+        train_fgsm_delta_norm += fgsm_delta_norm.sum().item()
         train_total += targets.size(0)
 
     test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, test_pgd_delta_norm = eval(args, model, testloader, criterion)
@@ -144,8 +168,8 @@ def eval_init(args, writer, logger, model, trainloader, testloader, criterion, o
               train_clean_loss / train_total, 100. * train_clean_correct / train_total, train_fgsm_loss / train_total, 100. * train_fgsm_correct / train_total,
               train_fgsm_delta_norm / train_total,  test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, test_pgd_delta_norm)
     logger.info(
-        '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f',
-        0, -1, -1, opt.param_groups[0]['lr'], train_fgsm_loss / train_total, 100. * train_fgsm_correct / train_total, test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc)
+        '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f \t %.2f',
+        0, -1, -1, opt.param_groups[0]['lr'], train_fgsm_loss / train_total, 100. * train_fgsm_correct / train_total, test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, train_fgsm_delta_norm / train_total, test_pgd_delta_norm)
 
 
 def main():
@@ -207,8 +231,6 @@ def main():
                                                            gamma=0.1)
 
     args.epsilon = (args.epsilon / 255.) / std
-    args.train_fgsm_alpha = (args.train_fgsm_alpha / 255.) / std
-    args.eval_pgd_alpha = (args.eval_pgd_alpha / 255.) / std
     if args.finetune:
         # Load checkpoint.
         logger.info('==> Resuming from checkpoint..')
@@ -220,9 +242,10 @@ def main():
 
     logger.info(
         'Epoch \t Train Time \t Test Time \t LR \t \t Train Loss \t Train Acc \t Test Standard Loss \t Test Standard '
-        'Acc \t Test Attack Loss \t Test Attack Acc')
+        'Acc \t Test Attack Loss \t Test Attack Acc \t Train fgsm norm \t Test pgd norm')
     eval_init(args, writer, logger, model, trainloader, testloader, criterion, optimizer)
 
+    best_test_pgd_acc = 0
     for epoch in range(args.num_epochs):
         start_time = time.time()
         train_clean_loss, train_clean_acc, train_fgsm_loss, train_fgsm_acc, train_fgsm_delta_norm = train(args, model, trainloader, optimizer, criterion, step_lr_scheduler)
@@ -235,13 +258,19 @@ def main():
                   train_clean_loss, train_clean_acc, train_fgsm_loss, train_fgsm_acc, train_fgsm_delta_norm,
                   test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, test_pgd_delta_norm)
         logger.info(
-            '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f',
+            '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f \t %.2f',
             epoch+1, train_time-start_time, test_time-train_time, optimizer.param_groups[0]['lr'],
-            train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc)
+            train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, train_fgsm_delta_norm, test_pgd_delta_norm)
         if args.lr_schedule == 'multistep':
             step_lr_scheduler.step()
-        # save_checkpoint(model, epoch+1, train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc, test_pgd_loss,
-        #                 test_pgd_acc, os.path.join(CHECKPOINT_DIR, args.exp_name + f'_{epoch}.pth'))
+
+        if test_pgd_acc >= best_test_pgd_acc:
+            save_checkpoint(model, epoch+1, train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc,
+                            test_pgd_loss, test_pgd_acc, os.path.join(CHECKPOINT_DIR, args.exp_name + f'_best.pth'))
+            best_test_pgd_acc = test_pgd_acc
+
+    save_checkpoint(model, epoch+1, train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc, test_pgd_loss,
+                    test_pgd_acc, os.path.join(CHECKPOINT_DIR, args.exp_name + f'_final.pth'))
 
     writer.close()
 
