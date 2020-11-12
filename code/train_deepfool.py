@@ -27,21 +27,17 @@ def get_args():
     parser.add_argument('--num_epochs', default=200, type=int)
     parser.add_argument('--optimizer', default='sgd', choices=['sgd', 'adam'])
 
-    parser.add_argument('--train_deepfool_classes_num', default=2, type=int)
+    parser.add_argument('--train_overshoot', default=0.02, type=float)
     parser.add_argument('--train_deepfool_max_iter', default=1, type=int)
+    parser.add_argument('--train_deepfool_norm_dist', default='l_inf', type=str)
+    parser.add_argument('--train_deepfool_rs', action='store_true')
+    parser.add_argument('--train_deepfool_norm_rs', default='l_inf', type=str)
+    parser.add_argument('--epsilon', default=8, type=int)
     parser.add_argument('--train_deepfool_eval', action='store_true')
-    parser.add_argument('--overshoot', default=0.02, type=float)
-    parser.add_argument('--df_clamp', action='store_true')
-    parser.add_argument('--deepfool_rs', action='store_true')
-    parser.add_argument('--deepfool_epsilon', default=8, type=int)
-    parser.add_argument('--deepfool_norm_rs', default='l_inf', type=str)
-    parser.add_argument('--deepfool_norm_dist', default='l_2', type=str)
-    parser.add_argument('--deepfool_alpha', default=1, type=float)
-    parser.add_argument('--eval_epsilon', default=8, type=int)
-    parser.add_argument('--eval_pgd_alpha', default=2, type=float)
+    parser.add_argument('--train_df_clamp', action='store_true')
+    parser.add_argument('--eval_pgd_ratio', default=0.25, type=float)
     parser.add_argument('--eval_pgd_attack_iters', default=10, type=int)
     parser.add_argument('--eval_pgd_restarts', default=1, type=int)
-    parser.add_argument('--eval_deepfool_classes_num', default=2, type=int)
     parser.add_argument('--eval_deepfool_max_iter', default=50, type=int)
 
     parser.add_argument('--finetune', action='store_true', help='finetune the pre-trained model with adversarial '
@@ -60,13 +56,12 @@ def train(args, model, trainloader, optimizer, criterion):
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
-        pert_inputs, loop, perturbation = deepfool(model, inputs, num_classes=args.train_deepfool_classes_num, overshoot=args.overshoot,
+        pert_inputs, loop, perturbation = deepfool_train(model, inputs, overshoot=args.train_overshoot,
                                                    max_iter=args.train_deepfool_max_iter,
-                                                   norm_dist=args.deepfool_norm_dist, device=args.device,
-                                                   random_start=args.deepfool_rs, norm_rs=args.deepfool_norm_rs,
-                                                   epsilon=args.deepfool_epsilon,
-                                                   early_stop=False, model_in_eval=args.train_deepfool_eval,
-                                                   alpha=args.deepfool_alpha, df_clamp=args.df_clamp)
+                                                   norm_dist=args.train_deepfool_norm_dist, device=args.device,
+                                                   random_start=args.train_deepfool_rs, norm_rs=args.train_deepfool_norm_rs,
+                                                   epsilon=args.epsilon, early_stop=False,
+                                                   model_in_eval=args.train_deepfool_eval,  df_clamp=args.train_df_clamp)
         model.train()
         perturbation_norm = perturbation.view(perturbation.shape[0], -1).norm(dim=1)
 
@@ -93,7 +88,6 @@ def train(args, model, trainloader, optimizer, criterion):
 def eval(args, model, testloader, criterion):
     model.eval()
     test_clean_loss, test_clean_correct, test_pgd_loss, test_pgd_correct, test_total = 0, 0, 0, 0, 0
-    # test_df_loop, test_df_perturbation_norm = 0, 0
     for batch_idx, (inputs, targets) in enumerate(testloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
@@ -102,7 +96,7 @@ def eval(args, model, testloader, criterion):
         clean_loss = criterion(clean_outputs, targets)
 
         # pgd
-        pgd_delta = attack_pgd(model, inputs, targets, args.eval_epsilon, args.eval_pgd_alpha,
+        pgd_delta = attack_pgd(model, inputs, targets, args.epsilon, args.eval_pgd_ratio * args.epsilon,
                                args.eval_pgd_attack_iters, args.eval_pgd_restarts, args.device,
                                early_stop=True).detach()
         pgd_outputs = model(clamp(inputs + pgd_delta, lower_limit, upper_limit))
@@ -152,13 +146,14 @@ def eval_init(args, writer, logger, model, trainloader, testloader, criterion, o
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
-        pert_inputs, loop, perturbation = deepfool(model, inputs, num_classes=args.train_deepfool_classes_num, overshoot=args.overshoot,
-                                                   max_iter=args.train_deepfool_max_iter,
-                                                   norm_dist=args.deepfool_norm_dist, device=args.device,
-                                                   random_start=args.deepfool_rs, norm_rs=args.deepfool_norm_rs,
-                                                   epsilon=args.deepfool_epsilon,
-                                                   early_stop=False, model_in_eval=args.train_deepfool_eval,
-                                                   alpha=args.deepfool_alpha, df_clamp=args.df_clamp)
+        pert_inputs, loop, perturbation = deepfool_train(model, inputs, overshoot=args.train_overshoot,
+                                                         max_iter=args.train_deepfool_max_iter,
+                                                         norm_dist=args.train_deepfool_norm_dist, device=args.device,
+                                                         random_start=args.train_deepfool_rs,
+                                                         norm_rs=args.train_deepfool_norm_rs,
+                                                         epsilon=args.epsilon, early_stop=False,
+                                                         model_in_eval=args.train_deepfool_eval,
+                                                         df_clamp=args.train_df_clamp)
         model.train()
         perturbation_norm = perturbation.view(perturbation.shape[0], -1).norm(dim=1)
 
@@ -248,9 +243,7 @@ def main():
         step_lr_scheduler = optim.lr_scheduler.MultiStepLR(optimizer=optimizer, milestones=args.lr_change_epoch,
                                                            gamma=0.1)
 
-    args.deepfool_epsilon = (args.deepfool_epsilon / 255.) / std
-    args.eval_epsilon = (args.eval_epsilon / 255.) / std
-    args.eval_pgd_alpha = (args.eval_pgd_alpha / 255.) / std
+    args.epsilon = (args.epsilon / 255.) / std
     if args.finetune:
         # Load checkpoint.
         logger.info('==> Resuming from checkpoint..')
@@ -265,6 +258,7 @@ def main():
         'Acc \t Test Attack Loss \t Test Attack Acc \t mean_df_norm \t max_df_norm \t 75_norm')
     eval_init(args, writer, logger, model, trainloader, testloader, criterion, optimizer)
 
+    best_test_pgd_acc = 0
     for epoch in range(args.num_epochs):
         start_time = time.time()
         train_clean_loss, train_clean_acc, train_df_loss, train_df_acc, train_df_loop, train_df_perturbation_norm = train(
@@ -286,6 +280,13 @@ def main():
 
         if args.lr_schedule == 'multistep':
             step_lr_scheduler.step()
+        if test_pgd_acc >= best_test_pgd_acc:
+            save_checkpoint(model, epoch+1, train_df_loss, train_df_acc, test_clean_loss, test_clean_acc,
+                            test_pgd_loss, test_pgd_acc, os.path.join(CHECKPOINT_DIR, args.exp_name + f'_best.pth'))
+            best_test_pgd_acc = test_pgd_acc
+
+    save_checkpoint(model, epoch+1, train_df_loss, train_df_acc, test_clean_loss, test_clean_acc, test_pgd_loss,
+                    test_pgd_acc, os.path.join(CHECKPOINT_DIR, args.exp_name + f'_final.pth'))
     writer.close()
 
 
