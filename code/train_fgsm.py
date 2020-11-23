@@ -88,7 +88,7 @@ def train(args, model, trainloader, optimizer, criterion, step_lr_scheduler):
     return train_clean_loss / train_total, 100. * train_clean_correct / train_total, train_fgsm_loss / train_total, 100. * train_fgsm_correct / train_total, train_fgsm_delta_norm / train_total
 
 
-def eval(args, model, testloader, criterion):
+def eval(args, model, testloader, criterion, finaleval=False):
     model.eval()
     test_clean_loss, test_clean_correct, test_pgd_loss, test_pgd_correct, test_pgd_delta_norm, test_total = 0, 0, 0, 0, 0, 0
     for batch_idx, (inputs, targets) in enumerate(testloader):
@@ -99,9 +99,12 @@ def eval(args, model, testloader, criterion):
         clean_loss = criterion(clean_outputs, targets)
 
         # pgd
-        pgd_delta = attack_pgd(model, inputs, targets, args.epsilon, args.eval_pgd_ratio * args.epsilon,
-                               args.eval_pgd_attack_iters, args.eval_pgd_restarts, args.device,
-                               early_stop=True).detach()
+        if finaleval:
+            pgd_delta = attack_pgd(model, inputs, targets, args.epsilon, args.eval_pgd_ratio * args.epsilon, 50, 10, args.device, early_stop=True).detach()
+        else:
+            pgd_delta = attack_pgd(model, inputs, targets, args.epsilon, args.eval_pgd_ratio * args.epsilon,
+                                   args.eval_pgd_attack_iters, args.eval_pgd_restarts, args.device,
+                                   early_stop=True).detach()
         pgd_outputs = model(clamp(inputs + pgd_delta, lower_limit, upper_limit))
         pgd_loss = criterion(pgd_outputs, targets)
         pgd_delta_norm = pgd_delta.view(pgd_delta.shape[0], -1).norm(dim=1)
@@ -178,7 +181,7 @@ def main():
     OUTPUT_DIR = './output'
     LOG_DIR = './output/log'
     TENSORBOARD_DIR = './output/tensorboard'
-    CHECKPOINT_DIR = './output/checkpoint'
+    CHECKPOINT_DIR = '../../../../scratch/pekang/checkpoint/'
     if not os.path.exists(OUTPUT_DIR):
         os.mkdir(OUTPUT_DIR)
     if not os.path.exists(LOG_DIR):
@@ -271,6 +274,19 @@ def main():
 
     save_checkpoint(model, epoch+1, train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc, test_pgd_loss,
                     test_pgd_acc, os.path.join(CHECKPOINT_DIR, args.exp_name + f'_final.pth'))
+
+    # Evaluate best and final
+    logger.info('best')
+    checkpoint = torch.load(os.path.join(CHECKPOINT_DIR, args.exp_name + f'_best.pth'))
+    model.load_state_dict(checkpoint['model'])
+    best_clean_loss, best_clean_acc, best_pgd_loss, best_pgd_acc, best_pgd_delta_norm = eval(args, model, testloader, criterion, finaleval=True)
+    logger.info('%d \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f', checkpoint['epoch'], best_clean_loss, best_clean_acc, best_pgd_loss, best_pgd_acc, best_pgd_delta_norm)
+
+    logger.info('final')
+    checkpoint = torch.load(os.path.join(CHECKPOINT_DIR, args.exp_name + f'_final.pth'))
+    model.load_state_dict(checkpoint['model'])
+    final_clean_loss, final_clean_acc, final_pgd_loss, final_pgd_acc, final_pgd_delta_norm = eval(args, model, testloader, criterion, finaleval=True)
+    logger.info('%d \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f', checkpoint['epoch'], final_clean_loss, final_clean_acc, final_pgd_loss, final_pgd_acc, final_pgd_delta_norm)
 
     writer.close()
 
