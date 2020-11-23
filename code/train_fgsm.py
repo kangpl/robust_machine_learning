@@ -218,10 +218,6 @@ def main():
     else:
         logger.info("This model hasn't been defined ", args.model)
         raise NotImplementedError
-    if torch.cuda.device_count() > 1:
-        logger.info(f"Let's use {torch.cuda.device_count()} GPUs!")
-        model = torch.nn.DataParallel(model)
-    model = model.to(args.device)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
@@ -242,6 +238,11 @@ def main():
         checkpoint = torch.load(os.path.join(CHECKPOINT_DIR, args.resumed_model_name))
         model.load_state_dict(checkpoint['model'])
         log_resumed_info(checkpoint, logger, writer)
+
+    if torch.cuda.device_count() > 1:
+        logger.info(f"Let's use {torch.cuda.device_count()} GPUs!")
+        model = torch.nn.DataParallel(model)
+    model = model.to(args.device)
 
     logger.info(
         'Epoch \t Train Time \t Test Time \t LR \t \t Train Loss \t Train Acc \t Test Standard Loss \t Test Standard '
