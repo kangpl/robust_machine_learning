@@ -283,7 +283,7 @@ def main():
 
         if args.lr_schedule == 'multistep':
             step_lr_scheduler.step()
-        if epoch % 5 == 0:
+        if epoch % 1 == 0:
             save_checkpoint(model, epoch + 1, train_df_loss, train_df_acc, test_clean_loss, test_clean_acc,
                             test_pgd_loss, test_pgd_acc, os.path.join(CHECKPOINT_DIR, args.exp_name + f'_{epoch+1}.pth'))
         if test_pgd_acc >= best_test_pgd_acc:
@@ -298,13 +298,13 @@ def main():
     logger.info('best')
     checkpoint = torch.load(os.path.join(CHECKPOINT_DIR, args.exp_name + f'_best.pth'))
     model.load_state_dict(checkpoint['model'])
-    best_clean_loss, best_clean_acc, best_pgd_loss, best_pgd_acc, _, _, _, _ = eval(args, model, testloader, criterion, finaleval=True)
+    best_clean_loss, best_clean_acc, best_pgd_loss, best_pgd_acc, _, _, _, _, _ = eval(args, model, testloader, criterion, finaleval=True)
     logger.info('%d \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f', checkpoint['epoch'], best_clean_loss, best_clean_acc, best_pgd_loss, best_pgd_acc)
 
     logger.info('final')
     checkpoint = torch.load(os.path.join(CHECKPOINT_DIR, args.exp_name + f'_final.pth'))
     model.load_state_dict(checkpoint['model'])
-    final_clean_loss, final_clean_acc, final_pgd_loss, final_pgd_acc, _, _, _, _ = eval(args, model, testloader, criterion, finaleval=True)
+    final_clean_loss, final_clean_acc, final_pgd_loss, final_pgd_acc, _, _, _, _, _ = eval(args, model, testloader, criterion, finaleval=True)
     logger.info('%d \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f', checkpoint['epoch'], final_clean_loss, final_clean_acc, final_pgd_loss, final_pgd_acc)
     writer.close()
 

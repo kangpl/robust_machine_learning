@@ -56,18 +56,18 @@ def train(args, model, trainloader, optimizer, criterion, step_lr_scheduler):
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
-        delta = torch.zeros_like(inputs).to(args.device)
+        # delta = torch.zeros_like(inputs).to(args.device)
         # if args.train_random_start:
         #     for i in range(len(args.epsilon)):
         #         delta[:, i, :, :].uniform_(-args.epsilon[i][0][0].item(), args.epsilon[i][0][0].item())
         #     delta = clamp(delta, lower_limit - inputs, upper_limit - inputs)
-        delta.requires_grad = True
-        output = model(inputs + delta)
-        loss = F.cross_entropy(output, targets)
-        loss.backward()
-        grad = delta.grad.detach()
-        fgsm_delta = clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), -args.epsilon, args.epsilon)
-        fgsm_delta = clamp(fgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
+        # delta.requires_grad = True
+        # output = model(inputs + delta)
+        # loss = F.cross_entropy(output, targets)
+        # loss.backward()
+        # grad = delta.grad.detach()
+        # fgsm_delta = clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), -args.epsilon, args.epsilon)
+        # fgsm_delta = clamp(fgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
 
         _, perturbation = deepfool_train(model, inputs, overshoot=args.train_overshoot,
                                       max_iter=args.train_deepfool_max_iter,
@@ -75,7 +75,7 @@ def train(args, model, trainloader, optimizer, criterion, step_lr_scheduler):
                                       random_start=args.train_deepfool_rs, norm_rs=args.train_deepfool_norm_rs,
                                       epsilon=args.epsilon, early_stop=False)
 
-        fgsm_delta_dynamic = torch.mul(abs(fgsm_delta), torch.sign(perturbation))
+        fgsm_delta_dynamic = clamp(args.train_fgsm_ratio * args.epsilon * torch.sign(perturbation), -args.epsilon, args.epsilon)
         fgsm_delta_dynamic = clamp(fgsm_delta_dynamic, lower_limit - inputs, upper_limit - inputs).detach()
         fgsm_delta_dynamic_norm = fgsm_delta_dynamic.view(fgsm_delta_dynamic.shape[0], -1).norm(dim=1)
 
@@ -168,18 +168,18 @@ def eval_init(args, writer, logger, model, trainloader, testloader, criterion, o
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
-        delta = torch.zeros_like(inputs).to(args.device)
+        # delta = torch.zeros_like(inputs).to(args.device)
         # if args.train_random_start:
         #     for i in range(len(args.epsilon)):
         #         delta[:, i, :, :].uniform_(-args.epsilon[i][0][0].item(), args.epsilon[i][0][0].item())
         #     delta = clamp(delta, lower_limit - inputs, upper_limit - inputs)
-        delta.requires_grad = True
-        output = model(inputs + delta)
-        loss = F.cross_entropy(output, targets)
-        loss.backward()
-        grad = delta.grad.detach()
-        fgsm_delta = clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), -args.epsilon, args.epsilon)
-        fgsm_delta = clamp(fgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
+        # delta.requires_grad = True
+        # output = model(inputs + delta)
+        # loss = F.cross_entropy(output, targets)
+        # loss.backward()
+        # grad = delta.grad.detach()
+        # fgsm_delta = clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), -args.epsilon, args.epsilon)
+        # fgsm_delta = clamp(fgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
 
         _, perturbation = deepfool_train(model, inputs, overshoot=args.train_overshoot,
                                          max_iter=args.train_deepfool_max_iter,
@@ -187,7 +187,8 @@ def eval_init(args, writer, logger, model, trainloader, testloader, criterion, o
                                          random_start=args.train_deepfool_rs, norm_rs=args.train_deepfool_norm_rs,
                                          epsilon=args.epsilon, early_stop=False)
 
-        fgsm_delta_dynamic = torch.mul(abs(fgsm_delta), torch.sign(perturbation))
+        fgsm_delta_dynamic = clamp(args.train_fgsm_ratio * args.epsilon * torch.sign(perturbation), -args.epsilon,
+                                   args.epsilon)
         fgsm_delta_dynamic = clamp(fgsm_delta_dynamic, lower_limit - inputs, upper_limit - inputs).detach()
         fgsm_delta_dynamic_norm = fgsm_delta_dynamic.view(fgsm_delta_dynamic.shape[0], -1).norm(dim=1)
 
@@ -305,7 +306,7 @@ def main():
         if args.lr_schedule == 'multistep':
             step_lr_scheduler.step()
 
-        if epoch % 5 == 0:
+        if epoch % 1 == 0:
             save_checkpoint(model, epoch + 1, train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc,
                             test_pgd_loss, test_pgd_acc, os.path.join(CHECKPOINT_DIR, args.exp_name + f'_{epoch+1}.pth'))
 
@@ -320,13 +321,13 @@ def main():
     logger.info('best')
     checkpoint = torch.load(os.path.join(CHECKPOINT_DIR, args.exp_name + f'_best.pth'))
     model.load_state_dict(checkpoint['model'])
-    best_clean_loss, best_clean_acc, best_pgd_loss, best_pgd_acc, best_pgd_delta_norm = eval(args, model, testloader, criterion, finaleval=True)
+    best_clean_loss, best_clean_acc, best_pgd_loss, best_pgd_acc, best_pgd_delta_norm, _, _, _, _ = eval(args, model, testloader, criterion, finaleval=True)
     logger.info('%d \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f', checkpoint['epoch'], best_clean_loss, best_clean_acc, best_pgd_loss, best_pgd_acc, best_pgd_delta_norm)
 
     logger.info('final')
     checkpoint = torch.load(os.path.join(CHECKPOINT_DIR, args.exp_name + f'_final.pth'))
     model.load_state_dict(checkpoint['model'])
-    final_clean_loss, final_clean_acc, final_pgd_loss, final_pgd_acc, final_pgd_delta_norm = eval(args, model, testloader, criterion, finaleval=True)
+    final_clean_loss, final_clean_acc, final_pgd_loss, final_pgd_acc, final_pgd_delta_norm, _, _, _, _ = eval(args, model, testloader, criterion, finaleval=True)
     logger.info('%d \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f', checkpoint['epoch'], final_clean_loss, final_clean_acc, final_pgd_loss, final_pgd_acc, final_pgd_delta_norm)
 
     writer.close()
