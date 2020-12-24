@@ -35,6 +35,7 @@ def get_args():
     parser.add_argument('--train_deepfool_rs', action='store_true')
     parser.add_argument('--train_deepfool_norm_rs', default='l_inf', type=str)
     parser.add_argument('--epsilon', default=8, type=int)
+    parser.add_argument('--clamp', default=1, type=float)
     parser.add_argument('--eval_pgd_ratio', default=0.25, type=float)
     parser.add_argument('--eval_pgd_attack_iters', default=10, type=int)
     parser.add_argument('--eval_pgd_restarts', default=1, type=int)
@@ -50,7 +51,7 @@ def get_args():
 # Training
 def train(args, model, trainloader, optimizer, criterion, step_lr_scheduler):
     model.train()
-    train_clean_loss, train_clean_correct, train_df_loss, train_df_correct, train_df_perturbation_norm, train_total = 0, 0, 0, 0, 0, 0
+    train_clean_loss, train_clean_correct, train_df_loss, train_df_correct, train_df2_loss, train_df2_correct, train_df_perturbation_norm, train_df_perturbation2_norm, train_cos, train_total = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
@@ -59,12 +60,25 @@ def train(args, model, trainloader, optimizer, criterion, step_lr_scheduler):
                                       norm_dist=args.train_deepfool_norm_dist, device=args.device,
                                       random_start=args.train_deepfool_rs, norm_rs=args.train_deepfool_norm_rs,
                                       epsilon=args.epsilon, early_stop=False)
-        perturbation = clamp(perturbation, -args.epsilon, args.epsilon)
+        perturbation = clamp(perturbation, -args.clamp * args.epsilon, args.clamp * args.epsilon)
         perturbation = clamp(perturbation, lower_limit - inputs, upper_limit - inputs).detach()
         perturbation_norm_after_clamp = perturbation.view(perturbation.shape[0], -1).norm(dim=1)
 
+        _, perturbation2 = deepfool_train(model, inputs, overshoot=args.train_overshoot,
+                                         max_iter=2,
+                                         norm_dist=args.train_deepfool_norm_dist, device=args.device,
+                                         random_start=args.train_deepfool_rs, norm_rs=args.train_deepfool_norm_rs,
+                                         epsilon=args.epsilon, early_stop=False)
+        perturbation2 = clamp(perturbation2, -args.clamp * args.epsilon, args.clamp * args.epsilon)
+        perturbation2 = clamp(perturbation2, lower_limit - inputs, upper_limit - inputs).detach()
+        perturbation2_norm_after_clamp = perturbation2.view(perturbation2.shape[0], -1).norm(dim=1)
+
+        cos = cal_cos_similarity(perturbation, perturbation2, perturbation_norm_after_clamp, perturbation2_norm_after_clamp)
+
         df_outputs = model(inputs + perturbation)
         df_loss = criterion(df_outputs, targets)
+        df2_outputs = model(inputs + perturbation2)
+        df2_loss = criterion(df2_outputs, targets)
         optimizer.zero_grad()
         df_loss.backward()
         optimizer.step()
@@ -74,25 +88,56 @@ def train(args, model, trainloader, optimizer, criterion, step_lr_scheduler):
 
         train_df_loss += df_loss.item() * targets.size(0)
         train_df_correct += (df_outputs.max(dim=1)[1] == targets).sum().item()
+        train_df2_loss += df2_loss.item() * targets.size(0)
+        train_df2_correct += (df2_outputs.max(dim=1)[1] == targets).sum().item()
         train_clean_loss += clean_loss.item() * targets.size(0)
         train_clean_correct += (clean_outputs.max(dim=1)[1] == targets).sum().item()
         train_total += targets.size(0)
         train_df_perturbation_norm += perturbation_norm_after_clamp.sum().item()
+        train_df_perturbation2_norm += perturbation2_norm_after_clamp.sum().item()
+        train_cos += cos.sum().item()
         if args.lr_schedule == 'cyclic':
             step_lr_scheduler.step()
-    return train_clean_loss / train_total, 100. * train_clean_correct / train_total, train_df_loss / train_total, 100. * train_df_correct / train_total, train_df_perturbation_norm / train_total
+    return train_clean_loss / train_total, 100. * train_clean_correct / train_total, \
+           train_df_loss / train_total, 100. * train_df_correct / train_total, train_df_perturbation_norm / train_total, \
+           train_df2_loss / train_total, 100. * train_df2_correct / train_total, train_df_perturbation2_norm / train_total, train_cos / train_total
 
 
 def eval(args, model, testloader, criterion, finaleval=False):
     model.eval()
-    test_clean_loss, test_clean_correct, test_pgd10_loss, test_pgd10_correct, test_pgd10_delta_norm, test_total = 0, 0, 0, 0, 0, 0
-    test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm, test_cos = 0, 0, 0, 0
+    test_clean_loss, test_clean_correct, test_df_loss, test_df_correct, test_df2_loss, test_df2_correct, test_pgd10_loss, test_pgd10_correct, test_pgd10_delta_norm, test_total = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm, test_df_perturbation_norm, test_df_perturbation2_norm, test_cos = 0, 0, 0, 0, 0, 0
     for batch_idx, (inputs, targets) in enumerate(testloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
         # clean
         input_grad, clean_outputs, clean_loss = get_input_grad_v2(model, inputs, targets)
         input_grad_norm = input_grad.view(input_grad.shape[0], -1).norm(dim=1)
+
+        _, perturbation = deepfool_train(model, inputs, overshoot=args.train_overshoot,
+                                         max_iter=args.train_deepfool_max_iter,
+                                         norm_dist=args.train_deepfool_norm_dist, device=args.device,
+                                         random_start=args.train_deepfool_rs, norm_rs=args.train_deepfool_norm_rs,
+                                         epsilon=args.epsilon, early_stop=False)
+        perturbation = clamp(perturbation, -args.clamp * args.epsilon, args.clamp * args.epsilon)
+        perturbation = clamp(perturbation, lower_limit - inputs, upper_limit - inputs).detach()
+        perturbation_norm_after_clamp = perturbation.view(perturbation.shape[0], -1).norm(dim=1)
+        df_outputs = model(inputs + perturbation)
+        df_loss = criterion(df_outputs, targets)
+
+        _, perturbation2 = deepfool_train(model, inputs, overshoot=args.train_overshoot,
+                                          max_iter=2,
+                                          norm_dist=args.train_deepfool_norm_dist, device=args.device,
+                                          random_start=args.train_deepfool_rs, norm_rs=args.train_deepfool_norm_rs,
+                                          epsilon=args.epsilon, early_stop=False)
+        perturbation2 = clamp(perturbation2, -args.clamp * args.epsilon, args.clamp * args.epsilon)
+        perturbation2 = clamp(perturbation2, lower_limit - inputs, upper_limit - inputs).detach()
+        perturbation2_norm_after_clamp = perturbation2.view(perturbation2.shape[0], -1).norm(dim=1)
+        df2_outputs = model(inputs + perturbation2)
+        df2_loss = criterion(df2_outputs, targets)
+
+        cos = cal_cos_similarity(perturbation, perturbation2, perturbation_norm_after_clamp,
+                                 perturbation2_norm_after_clamp)
 
         # pgd
         if finaleval:
@@ -110,9 +155,6 @@ def eval(args, model, testloader, criterion, finaleval=False):
                                             device=args.device, random_start=False, early_stop=True)
         perturbation_norm = perturbation.view(perturbation.shape[0], -1).norm(dim=1)
 
-        # cos between pgd10 and df50
-        cos = cal_cos_similarity(pgd_delta, perturbation, pgd_delta_norm, perturbation_norm)
-
         test_clean_loss += clean_loss.item() * targets.size(0)
         test_clean_correct += (clean_outputs.max(dim=1)[1] == targets).sum().item()
         test_pgd10_loss += pgd_loss.item() * targets.size(0)
@@ -122,31 +164,41 @@ def eval(args, model, testloader, criterion, finaleval=False):
         test_input_grad_norm += input_grad_norm.sum().item()
         test_df50_loop += loop.sum().item()
         test_df50_perturbation_norm += perturbation_norm.sum().item()
-        test_cos += abs(cos).sum().item()
+        test_df_loss += df_loss.item() * targets.size(0)
+        test_df_correct += (df_outputs.max(dim=1)[1] == targets).sum().item()
+        test_df2_loss += df2_loss.item() * targets.size(0)
+        test_df2_correct += (df2_outputs.max(dim=1)[1] == targets).sum().item()
+        test_df_perturbation_norm += perturbation_norm_after_clamp.sum().item()
+        test_df_perturbation2_norm += perturbation2_norm_after_clamp.sum().item()
+        test_cos += cos.sum().item()
 
     return test_clean_loss / test_total, 100. * test_clean_correct / test_total, \
+           test_df_loss / test_total, 100. * test_df_correct / test_total, test_df_perturbation_norm / test_total, \
+           test_df2_loss / test_total, 100. * test_df2_correct / test_total, test_df_perturbation2_norm / test_total, \
            test_pgd10_loss / test_total, 100. * test_pgd10_correct / test_total, test_pgd10_delta_norm / test_total, \
            test_input_grad_norm / test_total, test_df50_loop / test_total, test_df50_perturbation_norm / test_total, test_cos / test_total
 
 
-def tb_writer(writer, epoch, lr, train_clean_loss, train_clean_acc, train_df_loss, train_df_acc, train_df_perturbation_norm,
-              test_clean_loss, test_clean_acc, test_pgd10_loss, test_pgd10_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm, test_pgd10_df50_cos):
+def tb_writer(writer, epoch, lr, train_clean_loss, train_clean_acc, train_df_loss, train_df_acc, train_df_perturbation_norm, train_df2_loss, train_df2_acc, train_df_perturbation2_norm, train_cos,
+              test_clean_loss, test_clean_acc, test_df_loss, test_df_acc, test_df_perturbation_norm, test_df2_loss, test_df2_acc, test_df_perturbation2_norm, test_pgd10_loss, test_pgd10_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm, test_cos):
     writer.add_scalars('loss',
-                       {'train_clean': train_clean_loss, 'train_df': train_df_loss,
-                        'test_clean': test_clean_loss, 'test_pgd': test_pgd10_loss}, epoch)
+                       {'train_clean': train_clean_loss, 'train_df': train_df_loss, 'train_df2': train_df2_loss,
+                        'test_clean': test_clean_loss, 'test_pgd': test_pgd10_loss,
+                        'test_df': test_df_loss, 'test_df2': test_df2_loss}, epoch)
     writer.add_scalars('accuracy',
-                       {'train_clean': train_clean_acc, 'train_df': train_df_acc,
-                        'test_clean': test_clean_acc, 'test_pgd': test_pgd10_acc}, epoch)
+                       {'train_clean': train_clean_acc, 'train_df': train_df_acc, 'train_df2': train_df2_acc,
+                        'test_clean': test_clean_acc, 'test_pgd': test_pgd10_acc,
+                        'test_df': test_df_acc, 'test_df2': test_df2_acc}, epoch)
     writer.add_scalar('learning rate', lr, epoch)
     writer.add_scalar('test_input_grad_norm', test_input_grad_norm, epoch)
     writer.add_scalar('test_df50_loop', test_df50_loop, epoch)
-    writer.add_scalar('cos_pgd10_df50', test_pgd10_df50_cos, epoch)
-    writer.add_scalars('delta_norm', {'train_df': train_df_perturbation_norm, 'test_pgd10': test_pgd10_delta_norm, 'test_df50': test_df50_perturbation_norm}, epoch)
+    writer.add_scalars('cos_df_df2', {'train': train_cos, 'test': test_cos}, epoch)
+    writer.add_scalars('delta_norm', {'train_df': train_df_perturbation_norm, 'train_df2': train_df_perturbation2_norm, 'test_pgd10': test_pgd10_delta_norm, 'test_df': test_df_perturbation_norm, 'test_df2': test_df_perturbation2_norm, 'test_df50': test_df50_perturbation_norm}, epoch)
 
 
 def eval_init(args, writer, logger, model, trainloader, testloader, criterion, opt):
     model.eval()
-    train_clean_loss, train_clean_correct, train_df_loss, train_df_correct, train_df_perturbation_norm, train_total = 0, 0, 0, 0, 0, 0
+    train_clean_loss, train_clean_correct, train_df_loss, train_df_correct, train_df2_loss, train_df2_correct, train_df_perturbation_norm, train_df_perturbation2_norm, train_cos, train_total = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
@@ -155,28 +207,47 @@ def eval_init(args, writer, logger, model, trainloader, testloader, criterion, o
                                          norm_dist=args.train_deepfool_norm_dist, device=args.device,
                                          random_start=args.train_deepfool_rs, norm_rs=args.train_deepfool_norm_rs,
                                          epsilon=args.epsilon, early_stop=False)
-        perturbation = clamp(perturbation, -args.epsilon, args.epsilon)
+        perturbation = clamp(perturbation, -args.clamp * args.epsilon, args.clamp * args.epsilon)
         perturbation = clamp(perturbation, lower_limit - inputs, upper_limit - inputs).detach()
         perturbation_norm_after_clamp = perturbation.view(perturbation.shape[0], -1).norm(dim=1)
 
+        _, perturbation2 = deepfool_train(model, inputs, overshoot=args.train_overshoot,
+                                          max_iter=2,
+                                          norm_dist=args.train_deepfool_norm_dist, device=args.device,
+                                          random_start=args.train_deepfool_rs, norm_rs=args.train_deepfool_norm_rs,
+                                          epsilon=args.epsilon, early_stop=False)
+        perturbation2 = clamp(perturbation2, -args.clamp * args.epsilon, args.clamp * args.epsilon)
+        perturbation2 = clamp(perturbation2, lower_limit - inputs, upper_limit - inputs).detach()
+        perturbation2_norm_after_clamp = perturbation2.view(perturbation2.shape[0], -1).norm(dim=1)
+
+        cos = cal_cos_similarity(perturbation, perturbation2, perturbation_norm_after_clamp,
+                                 perturbation2_norm_after_clamp)
+
         df_outputs = model(inputs + perturbation)
         df_loss = criterion(df_outputs, targets)
+        df2_outputs = model(inputs + perturbation2)
+        df2_loss = criterion(df2_outputs, targets)
 
         clean_outputs = model(inputs)
         clean_loss = criterion(clean_outputs, targets)
 
         train_df_loss += df_loss.item() * targets.size(0)
         train_df_correct += (df_outputs.max(dim=1)[1] == targets).sum().item()
+        train_df2_loss += df2_loss.item() * targets.size(0)
+        train_df2_correct += (df2_outputs.max(dim=1)[1] == targets).sum().item()
         train_clean_loss += clean_loss.item() * targets.size(0)
         train_clean_correct += (clean_outputs.max(dim=1)[1] == targets).sum().item()
         train_total += targets.size(0)
         train_df_perturbation_norm += perturbation_norm_after_clamp.sum().item()
+        train_df_perturbation2_norm += perturbation2_norm_after_clamp.sum().item()
+        train_cos += cos.sum().item()
 
-    test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm, test_cos = eval(args, model, testloader, criterion)
+    test_clean_loss, test_clean_acc, test_df_loss, test_df_acc, test_df_perturbation_norm, test_df2_loss, test_df2_acc, test_df_perturbation2_norm, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm, test_cos = eval(args, model, testloader, criterion)
     tb_writer(writer, 0, opt.param_groups[0]['lr'],
-              train_clean_loss / train_total, 100. * train_clean_correct / train_total, train_df_loss / train_total,
-              100. * train_df_correct / train_total, train_df_perturbation_norm / train_total,
-              test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm, test_cos)
+              train_clean_loss / train_total, 100. * train_clean_correct / train_total,
+              train_df_loss / train_total, 100. * train_df_correct / train_total, train_df_perturbation_norm / train_total,
+              train_df2_loss / train_total, 100. * train_df2_correct / train_total, train_df_perturbation2_norm / train_total, train_cos / train_total,
+              test_clean_loss, test_clean_acc, test_df_loss, test_df_acc, test_df_perturbation_norm, test_df2_loss, test_df2_acc, test_df_perturbation2_norm, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm, test_cos)
     logger.info(
         '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f \t %.2f',
         0, -1, -1, opt.param_groups[0]['lr'], train_df_loss / train_total, 100. * train_df_correct / train_total,
@@ -265,17 +336,17 @@ def main():
     best_test_pgd_acc = 0
     for epoch in range(args.num_epochs):
         start_time = time.time()
-        train_clean_loss, train_clean_acc, train_df_loss, train_df_acc, train_df_perturbation_norm = train(
+        train_clean_loss, train_clean_acc, train_df_loss, train_df_acc, train_df_perturbation_norm, train_df2_loss, train_df2_acc, train_df_perturbation2_norm, train_cos = train(
             args, model, trainloader, optimizer, criterion, step_lr_scheduler)
         train_time = time.time()
 
-        test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm, test_cos = eval(
+        test_clean_loss, test_clean_acc, test_df_loss, test_df_acc, test_df_perturbation_norm, test_df2_loss, test_df2_acc, test_df_perturbation2_norm, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm, test_cos = eval(
             args, model, testloader, criterion)
         test_time = time.time()
 
         tb_writer(writer, epoch + 1, optimizer.param_groups[0]['lr'],
-                  train_clean_loss, train_clean_acc, train_df_loss, train_df_acc, train_df_perturbation_norm,
-                  test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm, test_cos )
+                  train_clean_loss, train_clean_acc, train_df_loss, train_df_acc, train_df_perturbation_norm, train_df2_loss, train_df2_acc, train_df_perturbation2_norm, train_cos,
+                  test_clean_loss, test_clean_acc, test_df_loss, test_df_acc, test_df_perturbation_norm, test_df2_loss, test_df2_acc, test_df_perturbation2_norm, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm, test_cos)
         logger.info(
             '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f \t %.2f',
             epoch + 1, train_time - start_time, test_time - train_time, optimizer.param_groups[0]['lr'],
@@ -298,13 +369,13 @@ def main():
     logger.info('best')
     checkpoint = torch.load(os.path.join(CHECKPOINT_DIR, args.exp_name + f'_best.pth'))
     model.load_state_dict(checkpoint['model'])
-    best_clean_loss, best_clean_acc, best_pgd_loss, best_pgd_acc, _, _, _, _, _ = eval(args, model, testloader, criterion, finaleval=True)
+    best_clean_loss, best_clean_acc, _, _, _, _, _, _, best_pgd_loss, best_pgd_acc, _, _, _, _, _ = eval(args, model, testloader, criterion, finaleval=True)
     logger.info('%d \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f', checkpoint['epoch'], best_clean_loss, best_clean_acc, best_pgd_loss, best_pgd_acc)
 
     logger.info('final')
     checkpoint = torch.load(os.path.join(CHECKPOINT_DIR, args.exp_name + f'_final.pth'))
     model.load_state_dict(checkpoint['model'])
-    final_clean_loss, final_clean_acc, final_pgd_loss, final_pgd_acc, _, _, _, _, _ = eval(args, model, testloader, criterion, finaleval=True)
+    final_clean_loss, final_clean_acc, _, _, _, _, _, _, final_pgd_loss, final_pgd_acc, _, _, _, _, _ = eval(args, model, testloader, criterion, finaleval=True)
     logger.info('%d \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f', checkpoint['epoch'], final_clean_loss, final_clean_acc, final_pgd_loss, final_pgd_acc)
     writer.close()
 
