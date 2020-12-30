@@ -122,13 +122,11 @@ def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts, device, norm
 
 def get_input_grad(model, X, y, delta_init='none', backprop=False, device='cuda'):
     if delta_init == 'none':
-        delta = torch.zeros_like(X, requires_grad=True).to(device)
-    else:
-        raise ValueError('wrong delta init')
+        delta_init = torch.zeros_like(X, requires_grad=True).to(device)
 
-    output = model(X + delta)
+    output = model(X + delta_init)
     loss = F.cross_entropy(output, y)
-    grad = torch.autograd.grad(loss, delta, create_graph=True if backprop else False)[0]
+    grad = torch.autograd.grad(loss, delta_init, create_graph=True if backprop else False)[0]
     if not backprop:
         grad = grad.detach()
     return grad
