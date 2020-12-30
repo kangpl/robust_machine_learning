@@ -29,8 +29,7 @@ def get_args():
     parser.add_argument('--num_epochs', default=200, type=int)
 
     parser.add_argument('--epsilon', default=8, type=int)
-    parser.add_argument('--delta_lambda', default=1000, type=float)
-    parser.add_argument('--train_fgsm_ratio', default=1, type=float)
+    parser.add_argument('--train_pgd_ratio', default=0.5, type=float)
     parser.add_argument('--train_random_start', action='store_true')
     parser.add_argument('--eval_pgd_ratio', default=0.25, type=float)
     parser.add_argument('--eval_pgd_attack_iters', default=10, type=int)
@@ -47,57 +46,39 @@ def get_args():
 # Training
 def train(args, model, trainloader, optimizer, criterion, step_lr_scheduler):
     model.train()
-    train_clean_loss, train_clean_correct, train_fgsm_loss, train_reg, train_fgsm_correct, train_fgsm_delta_norm, train_total = 0, 0, 0, 0, 0, 0, 0
+    train_clean_loss, train_clean_correct, train_pgd_loss, train_pgd_correct, train_pgd_delta_norm, train_total = 0, 0, 0, 0, 0, 0
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
-        delta = torch.zeros_like(inputs).to(args.device)
-        if args.train_random_start:
-            for i in range(len(args.epsilon)):
-                delta[:, i, :, :].uniform_(-args.epsilon[i][0][0].item(), args.epsilon[i][0][0].item())
-            delta = clamp(delta, lower_limit - inputs, upper_limit - inputs)
-        delta.requires_grad = True
-        output = model(inputs + delta)
-        loss = F.cross_entropy(output, targets)
-        loss.backward()
-        grad = delta.grad.detach()
-
-        fgsm_delta = clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), -args.epsilon, args.epsilon)
-        fgsm_delta = clamp(fgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
-        fgsm_delta.requires_grad = True
-        fgsm_delta_norm = fgsm_delta.view(fgsm_delta.shape[0], -1).norm(dim=1)
-
-        fgsm_outputs = model(inputs + fgsm_delta)
-        fgsm_loss = criterion(fgsm_outputs, targets)
-
-        reg_grad = get_input_grad(model, inputs, targets, fgsm_delta, True, args.device)
-        reg = args.delta_lambda * torch.mean(torch.pow(reg_grad.view(reg_grad.shape[0], -1).norm(dim=1), 2))
-        total_loss = fgsm_loss + reg
+        pgd_delta = attack_pgd(model, inputs, targets, args.epsilon, args.train_pgd_ratio * args.epsilon,
+                               2, 1, args.device, random_start=False, early_stop=False).detach()
+        pgd_outputs = model(clamp(inputs + pgd_delta, lower_limit, upper_limit))
+        pgd_loss = criterion(pgd_outputs, targets)
+        pgd_delta_norm = pgd_delta.view(pgd_delta.shape[0], -1).norm(dim=1)
 
         optimizer.zero_grad()
-        total_loss.backward()
+        pgd_loss.backward()
         optimizer.step()
 
         clean_outputs = model(inputs)
         clean_loss = criterion(clean_outputs, targets)
 
-        train_fgsm_loss += total_loss.item() * targets.size(0)
-        train_reg += reg.item() * targets.size(0)
-        train_fgsm_correct += (fgsm_outputs.max(dim=1)[1] == targets).sum().item()
+        train_pgd_loss += pgd_loss.item() * targets.size(0)
+        train_pgd_correct += (pgd_outputs.max(dim=1)[1] == targets).sum().item()
         train_clean_loss += clean_loss.item() * targets.size(0)
         train_clean_correct += (clean_outputs.max(dim=1)[1] == targets).sum().item()
-        train_fgsm_delta_norm += fgsm_delta_norm.sum().item()
+        train_pgd_delta_norm += pgd_delta_norm.sum().item()
         train_total += targets.size(0)
         if args.lr_schedule == 'cyclic':
             step_lr_scheduler.step()
 
-    return train_clean_loss / train_total, train_reg / train_total, 100. * train_clean_correct / train_total, train_fgsm_loss / train_total, 100. * train_fgsm_correct / train_total, train_fgsm_delta_norm / train_total
+    return train_clean_loss / train_total, 100. * train_clean_correct / train_total, train_pgd_loss / train_total, 100. * train_pgd_correct / train_total, train_pgd_delta_norm / train_total
 
 
 def eval(args, model, testloader, criterion, finaleval=False):
     model.eval()
     test_clean_loss, test_clean_correct, test_pgd10_loss, test_pgd10_correct, test_pgd10_delta_norm, test_total = 0, 0, 0, 0, 0, 0
-    test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm, test_cos = 0, 0, 0, 0
+    test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm = 0, 0, 0
     for batch_idx, (inputs, targets) in enumerate(testloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
@@ -121,86 +102,64 @@ def eval(args, model, testloader, criterion, finaleval=False):
                                             device=args.device, random_start=False, early_stop=True)
         perturbation_norm = perturbation.view(perturbation.shape[0], -1).norm(dim=1)
 
-        # cos between pgd10 and df50
-        cos = cal_cos_similarity(pgd_delta, perturbation, pgd_delta_norm, perturbation_norm)
-
         test_clean_loss += clean_loss.item() * targets.size(0)
         test_clean_correct += (clean_outputs.max(dim=1)[1] == targets).sum().item()
         test_pgd10_loss += pgd_loss.item() * targets.size(0)
         test_pgd10_correct += (pgd_outputs.max(dim=1)[1] == targets).sum().item()
         test_pgd10_delta_norm += pgd_delta_norm.sum().item()
-        test_total += targets.size(0)
         test_input_grad_norm += input_grad_norm.sum().item()
         test_df50_loop += loop.sum().item()
         test_df50_perturbation_norm += perturbation_norm.sum().item()
-        test_cos += cos.sum().item()
+        test_total += targets.size(0)
 
     return test_clean_loss / test_total, 100. * test_clean_correct / test_total, \
            test_pgd10_loss / test_total, 100. * test_pgd10_correct / test_total, test_pgd10_delta_norm / test_total, \
-           test_input_grad_norm / test_total, test_df50_loop / test_total, test_df50_perturbation_norm / test_total, test_cos / test_total
+           test_input_grad_norm / test_total, test_df50_loop / test_total, test_df50_perturbation_norm / test_total
 
 
-def tb_writer(writer, epoch, lr, train_clean_loss, train_clean_acc, train_fgsm_loss, train_fgsm_acc, train_fgsm_delta_norm,
-              test_clean_loss, test_clean_acc, test_pgd10_loss, test_pgd10_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm, test_pgd10_df50_cos):
+def tb_writer(writer, epoch, lr, train_clean_loss, train_clean_acc, train_pgd_loss, train_pgd_acc, train_pgd_delta_norm,
+              test_clean_loss, test_clean_acc, test_pgd10_loss, test_pgd10_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm):
     writer.add_scalars('loss',
-                       {'train_clean': train_clean_loss, 'train_fgsm': train_fgsm_loss,
-                        'test_clean': test_clean_loss, 'test_pgd': test_pgd10_loss}, epoch)
+                       {'train_clean': train_clean_loss, 'train_pgd2': train_pgd_loss,
+                        'test_clean': test_clean_loss, 'test_pgd10': test_pgd10_loss}, epoch)
     writer.add_scalars('accuracy',
-                       {'train_clean': train_clean_acc, 'train_fgsm': train_fgsm_acc,
+                       {'train_clean': train_clean_acc, 'train_pgd2': train_pgd_acc,
                         'test_clean': test_clean_acc, 'test_pgd': test_pgd10_acc}, epoch)
     writer.add_scalar('learning rate', lr, epoch)
-    writer.add_scalar('cos_pgd10_df50', test_pgd10_df50_cos, epoch)
     writer.add_scalar('test_input_grad_norm', test_input_grad_norm, epoch)
     writer.add_scalar('test_df50_loop', test_df50_loop, epoch)
-    writer.add_scalars('delta_norm', {'train_fgsm': train_fgsm_delta_norm, 'test_pgd10': test_pgd10_delta_norm, 'test_df50': test_df50_perturbation_norm}, epoch)
+    writer.add_scalars('delta_norm', {'train_pgd2': train_pgd_delta_norm, 'test_pgd10': test_pgd10_delta_norm, 'test_df50': test_df50_perturbation_norm}, epoch)
 
 
 def eval_init(args, writer, logger, model, trainloader, testloader, criterion, opt):
     model.eval()
-    train_clean_loss, train_clean_correct, train_fgsm_loss, train_reg, train_fgsm_correct, train_fgsm_delta_norm, train_total = 0, 0, 0, 0, 0, 0, 0
+    train_clean_loss, train_clean_correct, train_pgd_loss, train_pgd_correct, train_pgd_delta_norm, train_total = 0, 0, 0, 0, 0, 0
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
-        delta = torch.zeros_like(inputs).to(args.device)
-        if args.train_random_start:
-            for i in range(len(args.epsilon)):
-                delta[:, i, :, :].uniform_(-args.epsilon[i][0][0].item(), args.epsilon[i][0][0].item())
-            delta = clamp(delta, lower_limit - inputs, upper_limit - inputs)
-        delta.requires_grad = True
-        output = model(inputs + delta)
-        loss = F.cross_entropy(output, targets)
-        loss.backward()
-        grad = delta.grad.detach()
-
-        fgsm_delta = clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), -args.epsilon, args.epsilon)
-        fgsm_delta = clamp(fgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
-        fgsm_delta.requires_grad = True
-        fgsm_delta_norm = fgsm_delta.view(fgsm_delta.shape[0], -1).norm(dim=1)
-        fgsm_outputs = model(inputs + fgsm_delta)
-        fgsm_loss = criterion(fgsm_outputs, targets)
-
-        reg_grad = get_input_grad(model, inputs, targets, fgsm_delta, True, args.device)
-        reg = args.delta_lambda * torch.mean(torch.pow(reg_grad.view(reg_grad.shape[0], -1).norm(dim=1), 2))
-        total_loss = fgsm_loss + reg
+        pgd_delta = attack_pgd(model, inputs, targets, args.epsilon, args.train_pgd_ratio * args.epsilon,
+                               2, 1, args.device, random_start=False, early_stop=False).detach()
+        pgd_outputs = model(clamp(inputs + pgd_delta, lower_limit, upper_limit))
+        pgd_loss = criterion(pgd_outputs, targets)
+        pgd_delta_norm = pgd_delta.view(pgd_delta.shape[0], -1).norm(dim=1)
 
         clean_outputs = model(inputs)
         clean_loss = criterion(clean_outputs, targets)
 
-        train_fgsm_loss += total_loss.item() * targets.size(0)
-        train_reg += reg.item() * targets.size(0)
-        train_fgsm_correct += (fgsm_outputs.max(dim=1)[1] == targets).sum().item()
+        train_pgd_loss += pgd_loss.item() * targets.size(0)
+        train_pgd_correct += (pgd_outputs.max(dim=1)[1] == targets).sum().item()
         train_clean_loss += clean_loss.item() * targets.size(0)
         train_clean_correct += (clean_outputs.max(dim=1)[1] == targets).sum().item()
-        train_fgsm_delta_norm += fgsm_delta_norm.sum().item()
+        train_pgd_delta_norm += pgd_delta_norm.sum().item()
         train_total += targets.size(0)
 
-    test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm, test_cos = eval(args, model, testloader, criterion)
+    test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm = eval(args, model, testloader, criterion)
     tb_writer(writer, 0, opt.param_groups[0]['lr'],
-              train_clean_loss / train_total, 100. * train_clean_correct / train_total, train_fgsm_loss / train_total, 100. * train_fgsm_correct / train_total,
-              train_fgsm_delta_norm / train_total, test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm, test_cos)
+              train_clean_loss / train_total, 100. * train_clean_correct / train_total, train_pgd_loss / train_total, 100. * train_pgd_correct / train_total, train_pgd_delta_norm / train_total,
+              test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm)
     logger.info(
-        '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t  %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f \t %.2f',
-        0, -1, -1, opt.param_groups[0]['lr'], train_fgsm_loss / train_total, train_reg / train_total, 100. * train_fgsm_correct / train_total, test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, train_fgsm_delta_norm / train_total, test_pgd10_delta_norm)
+        '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f \t %.2f',
+        0, -1, -1, opt.param_groups[0]['lr'], train_pgd_loss / train_total, 100. * train_pgd_correct / train_total, test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, train_pgd_delta_norm / train_total, test_pgd10_delta_norm)
 
 
 def main():
@@ -273,50 +232,50 @@ def main():
     model = model.to(args.device)
 
     logger.info(
-        'Epoch \t Train Time \t Test Time \t LR \t \t Train Loss \t Train Reg \t Train Acc \t Test Standard Loss \t Test Standard '
+        'Epoch \t Train Time \t Test Time \t LR \t \t Train Loss \t Train Acc \t Test Standard Loss \t Test Standard '
         'Acc \t Test Attack Loss \t Test Attack Acc \t Train fgsm norm \t Test pgd norm')
     eval_init(args, writer, logger, model, trainloader, testloader, criterion, optimizer)
 
     best_test_pgd_acc = 0
     for epoch in range(args.num_epochs):
         start_time = time.time()
-        train_clean_loss, train_reg, train_clean_acc, train_fgsm_loss, train_fgsm_acc, train_fgsm_delta_norm = train(args, model, trainloader, optimizer, criterion, step_lr_scheduler)
+        train_clean_loss, train_clean_acc, train_pgd2_loss, train_pgd2_acc, train_pgd2_delta_norm = train(args, model, trainloader, optimizer, criterion, step_lr_scheduler)
         train_time = time.time()
 
-        test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm, test_cos = eval(args, model, testloader, criterion)
+        test_clean_loss, test_clean_acc, test_pgd10_loss, test_pgd10_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm = eval(args, model, testloader, criterion)
         test_time = time.time()
 
         tb_writer(writer, epoch+1, optimizer.param_groups[0]['lr'],
-                  train_clean_loss, train_clean_acc, train_fgsm_loss, train_fgsm_acc, train_fgsm_delta_norm,
-                  test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm, test_cos)
+                  train_clean_loss, train_clean_acc, train_pgd2_loss, train_pgd2_acc, train_pgd2_delta_norm,
+                  test_clean_loss, test_clean_acc, test_pgd10_loss, test_pgd10_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm)
         logger.info(
-            '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f \t %.2f',
+            '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f \t %.2f',
             epoch+1, train_time-start_time, test_time-train_time, optimizer.param_groups[0]['lr'],
-            train_fgsm_loss, train_reg, train_fgsm_acc, test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, train_fgsm_delta_norm, test_pgd10_delta_norm)
+            train_pgd2_loss, train_pgd2_acc, test_clean_loss, test_clean_acc, test_pgd10_loss, test_pgd10_acc, train_pgd2_delta_norm, test_pgd10_delta_norm)
         if args.lr_schedule == 'multistep':
             step_lr_scheduler.step()
         if epoch % 1 == 0:
-            save_checkpoint(model, epoch + 1, train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc,
-                            test_pgd_loss, test_pgd_acc, os.path.join(CHECKPOINT_DIR, args.exp_name + f'_{epoch+1}.pth'))
-        if test_pgd_acc >= best_test_pgd_acc:
-            save_checkpoint(model, epoch+1, train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc,
-                            test_pgd_loss, test_pgd_acc, os.path.join(CHECKPOINT_DIR, args.exp_name + f'_best.pth'))
-            best_test_pgd_acc = test_pgd_acc
+            save_checkpoint(model, epoch + 1, train_pgd2_loss, train_pgd2_acc, test_clean_loss, test_clean_acc,
+                            test_pgd10_loss, test_pgd10_acc, os.path.join(CHECKPOINT_DIR, args.exp_name + f'_{epoch+1}.pth'))
+        if test_pgd10_acc >= best_test_pgd_acc:
+            save_checkpoint(model, epoch+1, train_pgd2_loss, train_pgd2_acc, test_clean_loss, test_clean_acc,
+                            test_pgd10_loss, test_pgd10_acc, os.path.join(CHECKPOINT_DIR, args.exp_name + f'_best.pth'))
+            best_test_pgd_acc = test_pgd10_acc
 
-    save_checkpoint(model, epoch+1, train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc, test_pgd_loss,
-                    test_pgd_acc, os.path.join(CHECKPOINT_DIR, args.exp_name + f'_final.pth'))
+    save_checkpoint(model, epoch+1, train_pgd2_loss, train_pgd2_acc, test_clean_loss, test_clean_acc, test_pgd10_loss,
+                    test_pgd10_acc, os.path.join(CHECKPOINT_DIR, args.exp_name + f'_final.pth'))
 
     # Evaluate best and final
     logger.info('best')
     checkpoint = torch.load(os.path.join(CHECKPOINT_DIR, args.exp_name + f'_best.pth'))
     model.load_state_dict(checkpoint['model'])
-    best_clean_loss, best_clean_acc, best_pgd_loss, best_pgd_acc, best_pgd_delta_norm, _, _, _, _ = eval(args, model, testloader, criterion, finaleval=True)
+    best_clean_loss, best_clean_acc, best_pgd_loss, best_pgd_acc, best_pgd_delta_norm, _, _, _ = eval(args, model, testloader, criterion, finaleval=True)
     logger.info('%d \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f', checkpoint['epoch'], best_clean_loss, best_clean_acc, best_pgd_loss, best_pgd_acc, best_pgd_delta_norm)
 
     logger.info('final')
     checkpoint = torch.load(os.path.join(CHECKPOINT_DIR, args.exp_name + f'_final.pth'))
     model.load_state_dict(checkpoint['model'])
-    final_clean_loss, final_clean_acc, final_pgd_loss, final_pgd_acc, final_pgd_delta_norm, _, _, _, _ = eval(args, model, testloader, criterion, finaleval=True)
+    final_clean_loss, final_clean_acc, final_pgd_loss, final_pgd_acc, final_pgd_delta_norm, _, _, _ = eval(args, model, testloader, criterion, finaleval=True)
     logger.info('%d \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f', checkpoint['epoch'], final_clean_loss, final_clean_acc, final_pgd_loss, final_pgd_acc, final_pgd_delta_norm)
 
     writer.close()

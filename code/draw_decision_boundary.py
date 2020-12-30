@@ -105,7 +105,7 @@ def draw_decision_boundary(logger, args, model, inputs, targets, e1_grad, e1_gra
         text.set_fontsize(10)
 
 
-def draw_differ_epoch(logger, args, model, testloaderAll, testloader, epoch):
+def draw_differ_epoch(logger, args, model, testloaderAll, testloader, epoch, label='test'):
     resumed_model_name = args.resumed_model_name + f'_{epoch}.pth'
     logger.info('======================' + resumed_model_name + '======================')
     checkpoint = torch.load(os.path.join(args.CHECKPOINT_DIR, resumed_model_name))
@@ -153,7 +153,7 @@ def draw_differ_epoch(logger, args, model, testloaderAll, testloader, epoch):
             loss = F.cross_entropy(output, targets)
             loss.backward()
             grad = delta.grad.detach()
-            fgsm_delta = clamp(delta + args.epsilon * torch.sign(grad), -args.epsilon, args.epsilon)
+            fgsm_delta = clamp(args.epsilon * torch.sign(grad), -args.epsilon, args.epsilon)
             fgsm_delta = clamp(fgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
             fgsm_delta_norm = fgsm_delta.view(fgsm_delta.shape[0], -1).norm(dim=1)
 
@@ -164,23 +164,23 @@ def draw_differ_epoch(logger, args, model, testloaderAll, testloader, epoch):
             perturbation_linf = clamp(perturbation_linf, lower_limit - inputs, upper_limit - inputs).detach()
             perturbation_linf_norm = perturbation_linf.view(perturbation_linf.shape[0], -1).norm(dim=1)
 
-            _, perturbation_l2_ = deepfool_train(model, inputs, overshoot=args.train_overshoot, max_iter=1, norm_dist='l_2',
-                                                device=args.device, random_start=False, early_stop=False)
-            perturbation_l2 = clamp(perturbation_l2_, -args.epsilon, args.epsilon)
-            perturbation_l2 = clamp(perturbation_l2, lower_limit - inputs, upper_limit - inputs).detach()
-            perturbation_l2_norm = perturbation_l2.view(perturbation_l2.shape[0], -1).norm(dim=1)
+            # _, perturbation_l2_ = deepfool_train(model, inputs, overshoot=args.train_overshoot, max_iter=1, norm_dist='l_2',
+            #                                     device=args.device, random_start=False, early_stop=False)
+            # perturbation_l2 = clamp(perturbation_l2_, -args.epsilon, args.epsilon)
+            # perturbation_l2 = clamp(perturbation_l2, lower_limit - inputs, upper_limit - inputs).detach()
+            # perturbation_l2_norm = perturbation_l2.view(perturbation_l2.shape[0], -1).norm(dim=1)
 
-            Dfgsm_Llinf_delta = torch.mul(abs(perturbation_linf), torch.sign(grad))
-            Dfgsm_Llinf_delta = clamp(Dfgsm_Llinf_delta, lower_limit - inputs, upper_limit - inputs).detach()
-            Dfgsm_Llinf_delta_norm = Dfgsm_Llinf_delta.view(Dfgsm_Llinf_delta.shape[0], -1).norm(dim=1)
+            # Dfgsm_Llinf_delta = clamp(torch.mul(abs(perturbation_linf_), torch.sign(grad)), -args.train_fgsm_ratio * args.epsilon, args.train_fgsm_ratio * args.epsilon)
+            # Dfgsm_Llinf_delta = clamp(Dfgsm_Llinf_delta, lower_limit - inputs, upper_limit - inputs).detach()
+            # Dfgsm_Llinf_delta_norm = Dfgsm_Llinf_delta.view(Dfgsm_Llinf_delta.shape[0], -1).norm(dim=1)
             #
             # Dfgsm_L2_delta = torch.mul(abs(perturbation_l2), torch.sign(grad))
             # Dfgsm_L2_delta = clamp(Dfgsm_L2_delta, lower_limit - inputs, upper_limit - inputs).detach()
             # Dfgsm_L2_delta_norm = Dfgsm_L2_delta.view(Dfgsm_L2_delta.shape[0], -1).norm(dim=1)
             #
-            Dlinf_Lfgsm_delta = clamp(args.train_fgsm_ratio * args.epsilon * torch.sign(perturbation_linf_), -args.epsilon, args.epsilon)
-            Dlinf_Lfgsm_delta = clamp(Dlinf_Lfgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
-            Dlinf_Lfgsm_delta_norm = Dlinf_Lfgsm_delta.view(Dlinf_Lfgsm_delta.shape[0], -1).norm(dim=1)
+            # Dlinf_Lfgsm_delta = clamp(args.train_fgsm_ratio * args.epsilon * torch.sign(perturbation_linf_), -args.epsilon, args.epsilon)
+            # Dlinf_Lfgsm_delta = clamp(Dlinf_Lfgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
+            # Dlinf_Lfgsm_delta_norm = Dlinf_Lfgsm_delta.view(Dlinf_Lfgsm_delta.shape[0], -1).norm(dim=1)
             #
             # Dl2_Lfgsm_delta = torch.mul(abs(fgsm_delta), torch.sign(perturbation_l2_))
             # Dl2_Lfgsm_delta = clamp(Dl2_Lfgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
@@ -220,19 +220,19 @@ def draw_differ_epoch(logger, args, model, testloaderAll, testloader, epoch):
             fgsm4_delta = clamp(fgsm4_delta, lower_limit - inputs, upper_limit - inputs).detach()
             fgsm4_delta_norm = fgsm4_delta.view(fgsm4_delta.shape[0], -1).norm(dim=1)
 
-            _, linf_delta = deepfool_eval_without_rs(model, (inputs + delta).detach(), overshoot=args.train_overshoot,
-                                                     norm_dist='l_inf', device=args.device)
-            linf_delta_norm = linf_delta.view(linf_delta.shape[0], -1).norm(dim=1)
-            _, l2_delta = deepfool_eval_without_rs(model, (inputs + delta).detach(), overshoot=args.train_overshoot,
-                                                   norm_dist='l_2', device=args.device)
-            l2_delta_norm = l2_delta.view(l2_delta.shape[0], -1).norm(dim=1)
+            # _, linf_delta = deepfool_eval_without_rs(model, (inputs + delta).detach(), overshoot=args.train_overshoot,
+            #                                          norm_dist='l_inf', device=args.device)
+            # linf_delta_norm = linf_delta.view(linf_delta.shape[0], -1).norm(dim=1)
+            # _, l2_delta = deepfool_eval_without_rs(model, (inputs + delta).detach(), overshoot=args.train_overshoot,
+            #                                        norm_dist='l_2', device=args.device)
+            # l2_delta_norm = l2_delta.view(l2_delta.shape[0], -1).norm(dim=1)
 
-            linf_rs_delta = clamp(delta + linf_delta, -args.epsilon, args.epsilon)
-            linf_rs_delta = clamp(linf_rs_delta, lower_limit - inputs, upper_limit - inputs).detach()
-            linf_rs_delta_norm = linf_rs_delta.view(linf_rs_delta.shape[0], -1).norm(dim=1)
-            l2_rs_delta = clamp(delta + l2_delta, -args.epsilon, args.epsilon)
-            l2_rs_delta = clamp(l2_rs_delta, lower_limit - inputs, upper_limit - inputs).detach()
-            l2_rs_delta_norm = l2_rs_delta.view(l2_rs_delta.shape[0], -1).norm(dim=1)
+            # linf_rs_delta = clamp(delta + linf_delta, -args.epsilon, args.epsilon)
+            # linf_rs_delta = clamp(linf_rs_delta, lower_limit - inputs, upper_limit - inputs).detach()
+            # linf_rs_delta_norm = linf_rs_delta.view(linf_rs_delta.shape[0], -1).norm(dim=1)
+            # l2_rs_delta = clamp(delta + l2_delta, -args.epsilon, args.epsilon)
+            # l2_rs_delta = clamp(l2_rs_delta, lower_limit - inputs, upper_limit - inputs).detach()
+            # l2_rs_delta_norm = l2_rs_delta.view(l2_rs_delta.shape[0], -1).norm(dim=1)
 
             # _, Dl2_Llinf_delta = deepfool_Dl2_Llinf(model, inputs, overshoot=args.train_overshoot, device=args.device)
             # Dl2_Llinf_delta = clamp(Dl2_Llinf_delta, -args.epsilon, args.epsilon)
@@ -248,44 +248,44 @@ def draw_differ_epoch(logger, args, model, testloaderAll, testloader, epoch):
                                    fgsm_delta_norm, palette, ax1, 'df50', f'fgsm_wors{args.epsilon_num}', loop=int(loop.item()))
             logger.info(f"between df50 and fgsm_rs{args.epsilon_num * args.train_fgsm_ratio}")
             draw_decision_boundary(logger, args, model, inputs, targets, perturbation50, perturbation50_norm, fgsm8_delta,
-                                   fgsm8_delta_norm, palette, ax2, 'df50', f'fgsm_rs{args.epsilon_num * args.train_fgsm_ratio}', loop=int(loop.item()))
+                                   fgsm8_delta_norm, palette, ax3, 'df50', f'fgsm_rs{args.epsilon_num * args.train_fgsm_ratio}', loop=int(loop.item()))
             logger.info(f"between df50 and fgsm_rs{args.epsilon_num * 0.5}")
             draw_decision_boundary(logger, args, model, inputs, targets, perturbation50, perturbation50_norm, fgsm4_delta,
-                                   fgsm4_delta_norm, palette, ax3, 'df50', f'fgsm_rs{args.epsilon_num * 0.5}', loop=int(loop.item()))
+                                   fgsm4_delta_norm, palette, ax4, 'df50', f'fgsm_rs{args.epsilon_num * 0.5}', loop=int(loop.item()))
             logger.info(f"between df50 and delta")
             draw_decision_boundary(logger, args, model, inputs, targets, perturbation50, perturbation50_norm, delta, delta_norm,
-                                   palette, ax4, 'df50', 'delta', loop=int(loop.item()))
+                                   palette, ax5, 'df50', 'delta', loop=int(loop.item()))
             logger.info(f"between fgsm_dir and delta")
-            draw_decision_boundary(logger, args, model, inputs, targets, fgsm_dir, fgsm_dir_norm, delta, delta_norm, palette, ax5,
+            draw_decision_boundary(logger, args, model, inputs, targets, fgsm_dir, fgsm_dir_norm, delta, delta_norm, palette, ax6,
                                    'fgsm_dir', 'delta', move=True)
             logger.info(f"between df50 and df_linf({args.train_overshoot})")
             draw_decision_boundary(logger, args, model, inputs, targets, perturbation50, perturbation50_norm, perturbation_linf,
-                                   perturbation_linf_norm, palette, ax6, 'df50', f'df_linf({args.train_overshoot})',
+                                   perturbation_linf_norm, palette, ax2, 'df50', f'df_linf({args.train_overshoot})',
                                    loop=int(loop.item()))
-            logger.info(f"between df50 and Dfgsm_Llinf")
-            draw_decision_boundary(logger, args, model, inputs, targets, perturbation50, perturbation50_norm,
-                                   Dfgsm_Llinf_delta,
-                                   Dfgsm_Llinf_delta_norm, palette, ax7, 'df50', 'Dfgsm_Llinf',
-                                   loop=int(loop.item()))
-            logger.info(f"between df50 and Dlinf_Lfgsm")
-            draw_decision_boundary(logger, args, model, inputs, targets, perturbation50, perturbation50_norm,
-                                   Dlinf_Lfgsm_delta,
-                                   Dlinf_Lfgsm_delta_norm, palette, ax8, 'df50', 'Dlinf_Lfgsm',
-                                   loop=int(loop.item()))
-            logger.info(f"between linf_dir({args.train_overshoot}) and delta")
-            draw_decision_boundary(logger, args, model, inputs, targets, linf_delta, linf_delta_norm, delta, delta_norm,
-                                   palette, ax9,
-                                   f'linf_dir({args.train_overshoot})', 'delta', move=True)
-            logger.info(f"between df50 and df_rs_linf({args.train_overshoot})")
-            draw_decision_boundary(logger, args, model, inputs, targets, perturbation50, perturbation50_norm,
-                                   linf_rs_delta,
-                                   linf_rs_delta_norm, palette, ax10, 'df50', f'df_rs_linf({args.train_overshoot})',
-                                   loop=int(loop.item()))
-            if loop != 1:
-                logger.info(f"between df50 and df_l2({args.train_overshoot})")
-                draw_decision_boundary(logger, args, model, inputs, targets, perturbation50, perturbation50_norm, perturbation_l2,
-                                       perturbation_l2_norm, palette, ax11, 'df50', f'df_l2({args.train_overshoot})',
-                                       loop=int(loop.item()))
+            # logger.info(f"between df50 and Dfgsm_Llinf")
+            # draw_decision_boundary(logger, args, model, inputs, targets, perturbation50, perturbation50_norm,
+            #                        Dfgsm_Llinf_delta,
+            #                        Dfgsm_Llinf_delta_norm, palette, ax6, 'df50', 'Dfgsm_Llinf',
+            #                        loop=int(loop.item()))
+            # logger.info(f"between df50 and Dlinf_Lfgsm")
+            # draw_decision_boundary(logger, args, model, inputs, targets, perturbation50, perturbation50_norm,
+            #                        Dlinf_Lfgsm_delta,
+            #                        Dlinf_Lfgsm_delta_norm, palette, ax7, 'df50', 'Dlinf_Lfgsm',
+            #                        loop=int(loop.item()))
+            # logger.info(f"between linf_dir({args.train_overshoot}) and delta")
+            # draw_decision_boundary(logger, args, model, inputs, targets, linf_delta, linf_delta_norm, delta, delta_norm,
+            #                        palette, ax8,
+            #                        f'linf_dir({args.train_overshoot})', 'delta', move=True)
+            # logger.info(f"between df50 and df_rs_linf({args.train_overshoot})")
+            # draw_decision_boundary(logger, args, model, inputs, targets, perturbation50, perturbation50_norm,
+            #                        linf_rs_delta,
+            #                        linf_rs_delta_norm, palette, ax9, 'df50', f'df_rs_linf({args.train_overshoot})',
+            #                        loop=int(loop.item()))
+            # if loop != 1:
+            #     logger.info(f"between df50 and df_l2({args.train_overshoot})")
+            #     draw_decision_boundary(logger, args, model, inputs, targets, perturbation50, perturbation50_norm, perturbation_l2,
+            #                            perturbation_l2_norm, palette, ax11, 'df50', f'df_l2({args.train_overshoot})',
+            #                            loop=int(loop.item()))
             # logger.info(f"between df50 and Dfgsm_L2")
             # draw_decision_boundary(logger, args, model, inputs, targets, perturbation50, perturbation50_norm,
             #                        Dfgsm_L2_delta,
@@ -296,13 +296,13 @@ def draw_differ_epoch(logger, args, model, testloaderAll, testloader, epoch):
             #                        Dl2_Lfgsm_delta,
             #                        Dl2_Lfgsm_delta_norm, palette, ax13, 'df50', 'Dl2_Lfgsm',
             #                        loop=int(loop.item()))
-            logger.info(f"between l2_dir({args.train_overshoot}) and delta")
-            draw_decision_boundary(logger, args, model, inputs, targets, l2_delta, l2_delta_norm, delta, delta_norm, palette, ax12,
-                                   f'l2_dir({args.train_overshoot})', 'delta', move=True)
-            logger.info(f"between df50 and df_rs_l2({args.train_overshoot})")
-            draw_decision_boundary(logger, args, model, inputs, targets, perturbation50, perturbation50_norm, l2_rs_delta,
-                                   l2_rs_delta_norm, palette, ax13, 'df50', f'df_rs_l2({args.train_overshoot})',
-                                   loop=int(loop.item()))
+            # logger.info(f"between l2_dir({args.train_overshoot}) and delta")
+            # draw_decision_boundary(logger, args, model, inputs, targets, l2_delta, l2_delta_norm, delta, delta_norm, palette, ax12,
+            #                        f'l2_dir({args.train_overshoot})', 'delta', move=True)
+            # logger.info(f"between df50 and df_rs_l2({args.train_overshoot})")
+            # draw_decision_boundary(logger, args, model, inputs, targets, perturbation50, perturbation50_norm, l2_rs_delta,
+            #                        l2_rs_delta_norm, palette, ax13, 'df50', f'df_rs_l2({args.train_overshoot})',
+            #                        loop=int(loop.item()))
             # logger.info(f"between df50 and Dl2_Llinf({args.train_overshoot})")
             # draw_decision_boundary(logger, args, model, inputs, targets, perturbation50, perturbation50_norm, Dl2_Llinf_delta,
             #                        Dl2_Llinf_delta_norm, palette, ax16, 'df50', f'Dl2_Llinf({args.train_overshoot})',
@@ -310,14 +310,14 @@ def draw_differ_epoch(logger, args, model, testloaderAll, testloader, epoch):
 
             logger.info("between df50 and pgd10")
             draw_decision_boundary(logger, args, model, inputs, targets, perturbation50, perturbation50_norm, pgd10_delta,
-                                   pgd10_delta_norm, palette, ax14, 'df50', 'pgd10', loop=int(loop.item()))
+                                   pgd10_delta_norm, palette, ax7, 'df50', 'pgd10', loop=int(loop.item()))
             logger.info("between df50 and pgd50")
             draw_decision_boundary(logger, args, model, inputs, targets, perturbation50, perturbation50_norm, pgd50_delta,
-                                   pgd50_delta_norm, palette, ax15, 'df50', 'pgd50', loop=int(loop.item()))
+                                   pgd50_delta_norm, palette, ax8, 'df50', 'pgd50', loop=int(loop.item()))
             logger.info("between pgd10 and pgd50")
             draw_decision_boundary(logger, args, model, inputs, targets, pgd10_delta, pgd10_delta_norm, pgd50_delta, pgd50_delta_norm,
-                                   palette, ax16, 'pgd10', 'pgd50')
-            plt.savefig('./images/' + resumed_model_name + f'_f{batch_idx}.png')
+                                   palette, ax9, 'pgd10', 'pgd50')
+            plt.savefig('./images/' + resumed_model_name + label + f'_f{batch_idx}.png')
             # plt.show()
             logger.info("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
             plt.close()
@@ -351,21 +351,21 @@ def main():
     logger.info(f"model trained on {args.device}")
 
     torch.manual_seed(233)
-    # transform_train = transforms.Compose([
-    #     transforms.RandomCrop(32, padding=4),
-    #     transforms.RandomHorizontalFlip(),
-    #     transforms.ToTensor(),
-    #     transforms.Normalize(cifar10_mean, cifar10_std),
-    # ])
+    transform_train = transforms.Compose([
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize(cifar10_mean, cifar10_std),
+    ])
     transform_test = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize(cifar10_mean, cifar10_std),
     ])
-    # trainset = datasets.CIFAR10(root=args.dataset_path, train=True, download=True, transform=transform_train)
-    # subsetTrain, _ = torch.utils.data.random_split(trainset, [100, 49900],
-    #                                                generator=torch.Generator().manual_seed(6666666666))
-    # trainloader = torch.utils.data.DataLoader(subsetTrain, batch_size=1, shuffle=False)
-    # trainloaderAll = torch.utils.data.DataLoader(subsetTrain, batch_size=100, shuffle=False)
+    trainset = datasets.CIFAR10(root=args.dataset_path, train=True, download=True, transform=transform_train)
+    subsetTrain, _ = torch.utils.data.random_split(trainset, [100, 49900],
+                                                   generator=torch.Generator().manual_seed(6666666666))
+    trainloader = torch.utils.data.DataLoader(subsetTrain, batch_size=1, shuffle=False)
+    trainloaderAll = torch.utils.data.DataLoader(subsetTrain, batch_size=100, shuffle=False)
 
     testset = datasets.CIFAR10(root=args.dataset_path, train=False, download=True, transform=transform_test)
     subsetA, _ = torch.utils.data.random_split(testset, [100, 9900],
@@ -391,7 +391,8 @@ def main():
     args.epsilon = (args.epsilon / 255.) / std
 
     for epoch in args.epochs:
-        draw_differ_epoch(logger, args, model, testloaderAll, testloader, epoch)
+        draw_differ_epoch(logger, args, model, testloaderAll, testloader, epoch, 'test')
+        # draw_differ_epoch(logger, args, model, trainloaderAll, trainloader, epoch, 'train')
 
 
 if __name__ == "__main__":
