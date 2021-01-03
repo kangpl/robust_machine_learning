@@ -19,7 +19,7 @@ def get_args():
     parser.add_argument('--epsilon', default=8, type=int)
     parser.add_argument('--model', '-m', default='PreActResNet18', type=str)
     parser.add_argument('--batch_size', '-b', default=256, type=int)
-    parser.add_argument('--interval', default=5, type=int)
+    parser.add_argument('--interval', default=1, type=int)
     parser.add_argument('--train_overshoot', default=0.02, type=float)
     parser.add_argument('--train_deepfool_norm_dist', default='l_inf', type=str)
     parser.add_argument('--resumed_model_name', default='standard_cifar.pth', help='the file name of resumed model')
@@ -54,8 +54,7 @@ def eval(args, model, testloader):
                                          max_iter=1,
                                          norm_dist=args.train_deepfool_norm_dist, device=args.device,
                                          random_start=False, early_stop=False)
-        perturbation = clamp(args.epsilon * torch.sign(perturbation), -args.epsilon,
-                                   args.epsilon)
+        perturbation = clamp(args.epsilon * torch.sign(perturbation), -args.epsilon, args.epsilon)
         perturbation = clamp(perturbation, lower_limit - inputs, upper_limit - inputs).detach()
 
         for i in range(10, 101, 10):
