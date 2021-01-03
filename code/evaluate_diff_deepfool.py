@@ -19,9 +19,10 @@ def get_args():
     parser.add_argument('--epsilon', default=8, type=int)
     parser.add_argument('--model', '-m', default='PreActResNet18', type=str)
     parser.add_argument('--batch_size', '-b', default=256, type=int)
-    parser.add_argument('--interval', default=5, type=int)
+    parser.add_argument('--interval', default=1, type=int)
     parser.add_argument('--train_overshoot', default=0.02, type=float)
     parser.add_argument('--train_deepfool_norm_dist', default='l_inf', type=str)
+    parser.add_argument('--clamp', default=1, type=float)
     parser.add_argument('--resumed_model_name', default='standard_cifar.pth', help='the file name of resumed model')
     parser.add_argument('--exp_name', default='standard_cifar', help='used as filename of saved model, '
                                                                      'tensorboard and log')
@@ -41,16 +42,16 @@ def eval(args, model, testloader):
                "test_df80_wors_correct": 0,
                "test_df90_wors_correct": 0,
                "test_df100_wors_correct": 0,
-               "test_df110_wors_correct": 0,
-               "test_df120_wors_correct": 0,
-               "test_df130_wors_correct": 0,
-               "test_df140_wors_correct": 0,
-               "test_df150_wors_correct": 0,
-               "test_df160_wors_correct": 0,
-               "test_df170_wors_correct": 0,
-               "test_df180_wors_correct": 0,
-               "test_df190_wors_correct": 0,
-               "test_df200_wors_correct": 0,
+               # "test_df110_wors_correct": 0,
+               # "test_df120_wors_correct": 0,
+               # "test_df130_wors_correct": 0,
+               # "test_df140_wors_correct": 0,
+               # "test_df150_wors_correct": 0,
+               # "test_df160_wors_correct": 0,
+               # "test_df170_wors_correct": 0,
+               # "test_df180_wors_correct": 0,
+               # "test_df190_wors_correct": 0,
+               # "test_df200_wors_correct": 0,
                "test_pgd10_correct": 0,
                "test_total": 0}
     for batch_idx, (inputs, targets) in enumerate(testloader):
@@ -64,10 +65,10 @@ def eval(args, model, testloader):
                                          max_iter=1,
                                          norm_dist=args.train_deepfool_norm_dist, device=args.device,
                                          random_start=False, early_stop=False)
-        perturbation = clamp(perturbation, -args.epsilon, args.epsilon)
+        perturbation = clamp(perturbation, -args.clamp * args.epsilon, args.clamp * args.epsilon)
         perturbation = clamp(perturbation, lower_limit - inputs, upper_limit - inputs).detach()
 
-        for i in range(10, 201, 10):
+        for i in range(10, 101, 10):
             df_perturbation = i / 100. * perturbation
             df_outputs = model(inputs + df_perturbation)
             metrics["test_df" + str(i) + "_wors_correct"] += (df_outputs.max(dim=1)[1] == targets).sum().item()
@@ -77,7 +78,7 @@ def eval(args, model, testloader):
         metrics["test_pgd10_correct"] += (pgd_outputs.max(dim=1)[1] == targets).sum().item()
 
     metrics["test_clean_correct"] = metrics["test_clean_correct"] / metrics["test_total"]
-    for i in range(10, 201, 10):
+    for i in range(10, 101, 10):
         metrics["test_df" + str(i) + "_wors_correct"] = metrics["test_df" + str(i) + "_wors_correct"] / metrics["test_total"]
     metrics["test_pgd10_correct"] = metrics["test_pgd10_correct"] / metrics["test_total"]
 
@@ -140,11 +141,11 @@ def main():
     logger.info(
         'epoch \t clean \t wors 10-100 \t pgd10')
 
-    for epoch in range(1, 200, args.interval):
+    for epoch in range(1, 201, args.interval):
         checkpoint = torch.load(os.path.join(CHECKPOINT_DIR, args.resumed_model_name + f'_{epoch}.pth'))
         model.load_state_dict(checkpoint['model'])
         metrics = eval(args, model, testloader)
-        logger.info('%d %.2f  %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f  %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f',
+        logger.info('%d %.2f  %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f  %.2f',
                     checkpoint['epoch'],
                     metrics["test_clean_correct"],
                     metrics["test_df10_wors_correct"],
@@ -157,16 +158,16 @@ def main():
                     metrics["test_df80_wors_correct"],
                     metrics["test_df90_wors_correct"],
                     metrics["test_df100_wors_correct"],
-                    metrics["test_df110_wors_correct"],
-                    metrics["test_df120_wors_correct"],
-                    metrics["test_df130_wors_correct"],
-                    metrics["test_df140_wors_correct"],
-                    metrics["test_df150_wors_correct"],
-                    metrics["test_df160_wors_correct"],
-                    metrics["test_df170_wors_correct"],
-                    metrics["test_df180_wors_correct"],
-                    metrics["test_df190_wors_correct"],
-                    metrics["test_df200_wors_correct"],
+                    # metrics["test_df110_wors_correct"],
+                    # metrics["test_df120_wors_correct"],
+                    # metrics["test_df130_wors_correct"],
+                    # metrics["test_df140_wors_correct"],
+                    # metrics["test_df150_wors_correct"],
+                    # metrics["test_df160_wors_correct"],
+                    # metrics["test_df170_wors_correct"],
+                    # metrics["test_df180_wors_correct"],
+                    # metrics["test_df190_wors_correct"],
+                    # metrics["test_df200_wors_correct"],
                     metrics["test_pgd10_correct"])
 
 if __name__ == "__main__":
