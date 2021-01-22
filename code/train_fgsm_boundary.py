@@ -27,9 +27,11 @@ def get_args():
     parser.add_argument('--lr_change_epoch', nargs='+', default=[100, 150], type=int)
     parser.add_argument('--batch_size', '-b', default=256, type=int)
     parser.add_argument('--num_epochs', default=200, type=int)
+    parser.add_argument('--clamp', action='store_true')
 
     parser.add_argument('--epsilon', default=8, type=int)
     parser.add_argument('--train_fgsm_ratio', default=1, type=float)
+    parser.add_argument('--train_random_start', action='store_true')
     parser.add_argument('--eval_pgd_ratio', default=0.25, type=float)
     parser.add_argument('--eval_pgd_attack_iters', default=10, type=int)
     parser.add_argument('--eval_pgd_restarts', default=1, type=int)
@@ -49,19 +51,21 @@ def train(args, model, trainloader, optimizer, criterion, step_lr_scheduler):
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
-        zero = torch.zeros_like(inputs).to(args.device)
-        zero.requires_grad = True
-        output = model(inputs + zero)
+        delta = torch.zeros_like(inputs).to(args.device)
+        if args.train_random_start:
+            delta = delta.normal_(0, 1).sign() * args.epsilon
+            delta = clamp(delta, lower_limit - inputs, upper_limit - inputs)
+        delta.requires_grad = True
+        output = model(inputs + delta)
         loss = F.cross_entropy(output, targets)
         loss.backward()
-        grad = zero.grad.detach()
+        grad = delta.grad.detach()
 
-        delta = zero.detach()
-        for i in range(len(args.epsilon)):
-            delta[:, i, :, :].uniform_(-args.epsilon[i][0][0].item(), args.epsilon[i][0][0].item())
-        delta = clamp(delta, lower_limit - inputs, upper_limit - inputs)
-
-        fgsm_delta = clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), -args.epsilon, args.epsilon)
+        if args.clamp:
+            fgsm_delta = clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), -args.epsilon,
+                               args.epsilon)
+        else:
+            fgsm_delta = delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad)
         fgsm_delta = clamp(fgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
         fgsm_delta_norm = fgsm_delta.view(fgsm_delta.shape[0], -1).norm(dim=1)
 
@@ -98,19 +102,21 @@ def eval(args, model, testloader, criterion, finaleval=False):
         input_grad_norm = input_grad.view(input_grad.shape[0], -1).norm(dim=1)
 
         # fgsm
-        zero = torch.zeros_like(inputs).to(args.device)
-        zero.requires_grad = True
-        output = model(inputs + zero)
+        delta = torch.zeros_like(inputs).to(args.device)
+        if args.train_random_start:
+            delta = delta.normal_(0, 1).sign() * args.epsilon
+            delta = clamp(delta, lower_limit - inputs, upper_limit - inputs)
+        delta.requires_grad = True
+        output = model(inputs + delta)
         loss = F.cross_entropy(output, targets)
         loss.backward()
-        grad = zero.grad.detach()
+        grad = delta.grad.detach()
 
-        delta = zero.detach()
-        for i in range(len(args.epsilon)):
-            delta[:, i, :, :].uniform_(-args.epsilon[i][0][0].item(), args.epsilon[i][0][0].item())
-        delta = clamp(delta, lower_limit - inputs, upper_limit - inputs)
-
-        fgsm_delta = clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), -args.epsilon, args.epsilon)
+        if args.clamp:
+            fgsm_delta = clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), -args.epsilon,
+                               args.epsilon)
+        else:
+            fgsm_delta = delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad)
         fgsm_delta = clamp(fgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
         fgsm_delta_norm = fgsm_delta.view(fgsm_delta.shape[0], -1).norm(dim=1)
 
@@ -178,19 +184,21 @@ def eval_init(args, writer, logger, model, trainloader, testloader, criterion, o
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
-        zero = torch.zeros_like(inputs).to(args.device)
-        zero.requires_grad = True
-        output = model(inputs + zero)
+        delta = torch.zeros_like(inputs).to(args.device)
+        if args.train_random_start:
+            delta = delta.normal_(0, 1).sign() * args.epsilon
+            delta = clamp(delta, lower_limit - inputs, upper_limit - inputs)
+        delta.requires_grad = True
+        output = model(inputs + delta)
         loss = F.cross_entropy(output, targets)
         loss.backward()
-        grad = zero.grad.detach()
+        grad = delta.grad.detach()
 
-        delta = zero.detach()
-        for i in range(len(args.epsilon)):
-            delta[:, i, :, :].uniform_(-args.epsilon[i][0][0].item(), args.epsilon[i][0][0].item())
-        delta = clamp(delta, lower_limit - inputs, upper_limit - inputs)
-
-        fgsm_delta = clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), -args.epsilon, args.epsilon)
+        if args.clamp:
+            fgsm_delta = clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), -args.epsilon,
+                               args.epsilon)
+        else:
+            fgsm_delta = delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad)
         fgsm_delta = clamp(fgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
         fgsm_delta_norm = fgsm_delta.view(fgsm_delta.shape[0], -1).norm(dim=1)
 
@@ -337,4 +345,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

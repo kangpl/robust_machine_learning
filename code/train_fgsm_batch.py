@@ -58,10 +58,15 @@ def train(args, logger, writer, model, trainloader, testloader, optimizer, crite
         fgsm_delta_20 = clamp(0.2 * fgsm_dir, -args.epsilon, args.epsilon)
         fgsm_delta_20 = clamp(fgsm_delta_20, lower_limit - inputs, upper_limit - inputs).detach()
         fgsm_20_outputs = model(inputs + fgsm_delta_20)
+        fgsm_20_loss = criterion(fgsm_20_outputs, targets)
 
         fgsm_delta_60 = clamp(0.6 * fgsm_dir, -args.epsilon, args.epsilon)
         fgsm_delta_60 = clamp(fgsm_delta_60, lower_limit - inputs, upper_limit - inputs).detach()
         fgsm_60_outputs = model(inputs + fgsm_delta_60)
+        fgsm_60_loss = criterion(fgsm_60_outputs, targets)
+
+        clean_outputs = model(inputs)
+        clean_loss = criterion(clean_outputs, targets)
 
         fgsm_outputs = model(inputs + fgsm_delta)
         fgsm_loss = criterion(fgsm_outputs, targets)
@@ -69,64 +74,171 @@ def train(args, logger, writer, model, trainloader, testloader, optimizer, crite
         fgsm_loss.backward()
         optimizer.step()
 
-        clean_outputs = model(inputs)
-        clean_loss = criterion(clean_outputs, targets)
-
         train_fgsm_loss = fgsm_loss.item()
         train_fgsm_acc = 100. * (fgsm_outputs.max(dim=1)[1] == targets).sum().item() / targets.size(0)
         train_clean_loss = clean_loss.item()
         train_clean_acc = 100. * (clean_outputs.max(dim=1)[1] == targets).sum().item() / targets.size(0)
         train_fgsm_delta_norm = fgsm_delta_norm.mean().item()
+        train_fgsm_20_loss = fgsm_20_loss.item()
         train_fgsm_20_acc = 100. * (fgsm_20_outputs.max(dim=1)[1] == targets).sum().item() / targets.size(0)
+        train_fgsm_60_loss = fgsm_60_loss.item()
         train_fgsm_60_acc = 100. * (fgsm_60_outputs.max(dim=1)[1] == targets).sum().item() / targets.size(0)
 
-        test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_fgsm_delta_norm, test_pgd10_loss, test_pgd10_acc, test_pgd10_delta_norm, test_fgsm_20_acc, test_fgsm_60_acc, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm = eval(args, model, testloader, criterion)
+        metrics = eval(args, model, testloader, criterion)
 
         tb_writer(writer, iteration, optimizer.param_groups[0]['lr'],
-                  train_clean_loss, train_clean_acc, train_fgsm_loss, train_fgsm_acc, train_fgsm_delta_norm, train_fgsm_20_acc, train_fgsm_60_acc,
-                  test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_fgsm_delta_norm, test_pgd10_loss,
-                  test_pgd10_acc, test_pgd10_delta_norm, test_fgsm_20_acc, test_fgsm_60_acc, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm)
+                  train_clean_loss, train_clean_acc, train_fgsm_loss, train_fgsm_acc, train_fgsm_delta_norm, train_fgsm_20_loss, train_fgsm_20_acc, train_fgsm_60_loss, train_fgsm_60_acc,
+                  metrics)
         logger.info(
             '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f \t %.2f',
             iteration, -1, -1, optimizer.param_groups[0]['lr'],
-            train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc, test_pgd10_loss, test_pgd10_acc,
-            train_fgsm_delta_norm, test_pgd10_delta_norm)
+            train_fgsm_loss, train_fgsm_acc, metrics['test_clean_loss'], metrics['test_clean_correct'], metrics['test_pgd10_loss'], metrics['test_pgd10_correct'],
+            train_fgsm_delta_norm, metrics['test_pgd10_delta_norm'])
         iteration = iteration + 1
 
 
 def eval(args, model, testloader, criterion):
     model.eval()
-    test_clean_loss, test_clean_correct, test_fgsm_loss, test_fgsm_correct, test_fgsm_delta_norm, test_pgd10_loss, test_pgd10_correct, test_pgd10_delta_norm, test_total = 0, 0, 0, 0, 0, 0, 0, 0, 0
-    test_fgsm_20_correct, test_fgsm_60_correct, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm = 0, 0, 0, 0, 0
+    metrics = {'test_clean_loss': 0,
+               'test_clean_correct': 0,
+               'test_fgsm_loss': 0,
+               'test_fgsm_correct': 0,
+               'test_fgsm_delta_norm': 0,
+               'test_pgd10_loss': 0,
+               'test_pgd10_correct': 0,
+               'test_pgd10_delta_norm': 0,
+               'test_fgsm_20_loss': 0,
+               'test_fgsm_20_correct': 0,
+               'test_fgsm_60_loss': 0,
+               'test_fgsm_60_correct': 0,
+               'test1_w_clamp_loss': 0,
+               'test1_w_clamp_correct': 0,
+               'test1_wo_clamp_loss': 0,
+               'test1_wo_clamp_correct': 0,
+               'test2_loss': 0,
+               'test2_correct': 0,
+               'test_rs_w_clamp_loss': 0,
+               'test_rs_w_clamp_correct': 0,
+               'test_rs_wo_clamp_loss': 0,
+               'test_rs_wo_clamp_correct': 0,
+               'test_diff_rs_w_clamp_loss': 0,
+               'test_diff_rs_w_clamp_correct': 0,
+               'test_diff_rs_wo_clamp_loss': 0,
+               'test_diff_rs_wo_clamp_correct': 0,
+               'test_input_grad_norm': 0,
+               'test_df50_loop': 0,
+               'test_df50_perturbation_norm': 0,
+               'test_total': 0}
     for batch_idx, (inputs, targets) in enumerate(testloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
         # clean
         input_grad, clean_outputs, clean_loss = get_input_grad_v2(model, inputs, targets)
         input_grad_norm = input_grad.view(input_grad.shape[0], -1).norm(dim=1)
+        metrics['test_clean_loss'] += clean_loss.item() * targets.size(0)
+        metrics['test_clean_correct'] += (clean_outputs.max(dim=1)[1] == targets).sum().item()
+        metrics['test_input_grad_norm'] += input_grad_norm.sum().item()
 
         # fgsm
-        delta = torch.zeros_like(inputs).to(args.device)
-        delta.requires_grad = True
-        output = model(inputs + delta)
+        zero = torch.zeros_like(inputs).to(args.device)
+        zero.requires_grad = True
+        output = model(inputs + zero)
         loss = F.cross_entropy(output, targets)
         loss.backward()
-        grad = delta.grad.detach()
-        fgsm_dir = args.train_fgsm_ratio * args.epsilon * torch.sign(grad)
+        grad_input = zero.grad.detach()
+        fgsm_dir = args.train_fgsm_ratio * args.epsilon * torch.sign(grad_input)
 
         fgsm_delta = clamp(fgsm_dir, -args.epsilon, args.epsilon)
         fgsm_delta = clamp(fgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
         fgsm_delta_norm = fgsm_delta.view(fgsm_delta.shape[0], -1).norm(dim=1)
         fgsm_outputs = model(inputs + fgsm_delta)
         fgsm_loss = criterion(fgsm_outputs, targets)
+        metrics['test_fgsm_loss'] += fgsm_loss.item() * targets.size(0)
+        metrics['test_fgsm_correct'] += (fgsm_outputs.max(dim=1)[1] == targets).sum().item()
+        metrics['test_fgsm_delta_norm'] += fgsm_delta_norm.sum().item()
 
         fgsm_delta_20 = clamp(0.2 * fgsm_dir, -args.epsilon, args.epsilon)
         fgsm_delta_20 = clamp(fgsm_delta_20, lower_limit - inputs, upper_limit - inputs).detach()
         fgsm_20_outputs = model(inputs + fgsm_delta_20)
+        fgsm_20_loss = criterion(fgsm_20_outputs, targets)
+        metrics['test_fgsm_20_loss'] += fgsm_20_loss.item() * targets.size(0)
+        metrics['test_fgsm_20_correct'] += (fgsm_20_outputs.max(dim=1)[1] == targets).sum().item()
 
         fgsm_delta_60 = clamp(0.6 * fgsm_dir, -args.epsilon, args.epsilon)
         fgsm_delta_60 = clamp(fgsm_delta_60, lower_limit - inputs, upper_limit - inputs).detach()
         fgsm_60_outputs = model(inputs + fgsm_delta_60)
+        fgsm_60_loss = criterion(fgsm_60_outputs, targets)
+        metrics['test_fgsm_60_loss'] += fgsm_60_loss.item() * targets.size(0)
+        metrics['test_fgsm_60_correct'] += (fgsm_60_outputs.max(dim=1)[1] == targets).sum().item()
+
+        delta = zero.detach()
+        for i in range(len(args.epsilon)):
+            delta[:, i, :, :].uniform_(-args.epsilon[i][0][0].item(), args.epsilon[i][0][0].item())
+        delta = clamp(delta, lower_limit - inputs, upper_limit - inputs)
+
+        test1_w_clamp = clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad_input), -args.epsilon,
+                           args.epsilon)
+        test1_w_clamp = clamp(test1_w_clamp, lower_limit - inputs, upper_limit - inputs).detach()
+        output_test1_w_clamp = model(inputs + test1_w_clamp)
+        loss_test1_w_clamp = F.cross_entropy(output_test1_w_clamp, targets)
+        metrics['test1_w_clamp_loss'] += loss_test1_w_clamp.item() * targets.size(0)
+        metrics['test1_w_clamp_correct'] += (output_test1_w_clamp.max(dim=1)[1] == targets).sum().item()
+
+        test1_wo_clamp = delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad_input)
+        test1_wo_clamp = clamp(test1_wo_clamp, lower_limit - inputs, upper_limit - inputs).detach()
+        output_test1_wo_clamp = model(inputs + test1_wo_clamp)
+        loss_test1_wo_clamp = F.cross_entropy(output_test1_wo_clamp, targets)
+        metrics['test1_wo_clamp_loss'] += loss_test1_wo_clamp.item() * targets.size(0)
+        metrics['test1_wo_clamp_correct'] += (output_test1_wo_clamp.max(dim=1)[1] == targets).sum().item()
+
+        delta.requires_grad = True
+        output = model(inputs + delta)
+        loss = F.cross_entropy(output, targets)
+        loss.backward()
+        grad_random = delta.grad.detach()
+
+        fgsm_test2 = clamp(args.train_fgsm_ratio * args.epsilon * torch.sign(grad_random), -args.epsilon, args.epsilon)
+        fgsm_test2 = clamp(fgsm_test2, lower_limit - inputs, upper_limit - inputs).detach()
+        output_test2 = model(inputs + fgsm_test2)
+        loss_test2 = F.cross_entropy(output_test2, targets)
+        metrics['test2_loss'] += loss_test2.item() * targets.size(0)
+        metrics['test2_correct'] += (output_test2.max(dim=1)[1] == targets).sum().item()
+
+        fgsm_rs_w_clamp = clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad_random), -args.epsilon,
+                        args.epsilon)
+        fgsm_rs_w_clamp = clamp(fgsm_rs_w_clamp, lower_limit - inputs, upper_limit - inputs).detach()
+        output_rs_w_clamp = model(inputs + fgsm_rs_w_clamp)
+        loss_rs_w_clamp = F.cross_entropy(output_rs_w_clamp, targets)
+        metrics['test_rs_w_clamp_loss'] += loss_rs_w_clamp.item() * targets.size(0)
+        metrics['test_rs_w_clamp_correct'] += (output_rs_w_clamp.max(dim=1)[1] == targets).sum().item()
+
+        fgsm_rs_wo_clamp = delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad_random)
+        fgsm_rs_wo_clamp = clamp(fgsm_rs_wo_clamp, lower_limit - inputs, upper_limit - inputs).detach()
+        output_rs_wo_clamp = model(inputs + fgsm_rs_wo_clamp)
+        loss_rs_wo_clamp = F.cross_entropy(output_rs_wo_clamp, targets)
+        metrics['test_rs_wo_clamp_loss'] += loss_rs_wo_clamp.item() * targets.size(0)
+        metrics['test_rs_wo_clamp_correct'] += (output_rs_wo_clamp.max(dim=1)[1] == targets).sum().item()
+
+        delta2 = torch.zeros_like(inputs).to(args.device)
+        for i in range(len(args.epsilon)):
+            delta2[:, i, :, :].uniform_(-args.epsilon[i][0][0].item(), args.epsilon[i][0][0].item())
+        delta2 = clamp(delta2, lower_limit - inputs, upper_limit - inputs)
+        fgsm_rs_diff_w_clamp = clamp(delta2 + args.train_fgsm_ratio * args.epsilon * torch.sign(grad_random), -args.epsilon,
+                             args.epsilon)
+        fgsm_rs_diff_w_clamp = clamp(fgsm_rs_diff_w_clamp, lower_limit - inputs, upper_limit - inputs).detach()
+        output_rs_diff_w_clamp = model(inputs + fgsm_rs_diff_w_clamp)
+        loss_rs_diff_w_clamp = F.cross_entropy(output_rs_diff_w_clamp, targets)
+        metrics['test_diff_rs_w_clamp_loss'] += loss_rs_diff_w_clamp.item() * targets.size(0)
+        metrics['test_diff_rs_w_clamp_correct'] += (output_rs_diff_w_clamp.max(dim=1)[1] == targets).sum().item()
+
+        fgsm_rs_diff_wo_clamp = delta2 + args.train_fgsm_ratio * args.epsilon * torch.sign(grad_random)
+        fgsm_rs_diff_wo_clamp = clamp(fgsm_rs_diff_wo_clamp, lower_limit - inputs, upper_limit - inputs).detach()
+        output_rs_diff_wo_clamp = model(inputs + fgsm_rs_diff_wo_clamp)
+        loss_rs_diff_wo_clamp = F.cross_entropy(output_rs_diff_wo_clamp, targets)
+        metrics['test_diff_rs_wo_clamp_loss'] += loss_rs_diff_wo_clamp.item() * targets.size(0)
+        metrics['test_diff_rs_wo_clamp_correct'] += (output_rs_diff_wo_clamp.max(dim=1)[1] == targets).sum().item()
+
+        metrics['test_total'] += targets.size(0)
 
         # pgd
         pgd_delta = attack_pgd(model, inputs, targets, args.epsilon, args.eval_pgd_ratio * args.epsilon,
@@ -135,45 +247,72 @@ def eval(args, model, testloader, criterion):
         pgd_outputs = model(clamp(inputs + pgd_delta, lower_limit, upper_limit))
         pgd_loss = criterion(pgd_outputs, targets)
         pgd_delta_norm = pgd_delta.view(pgd_delta.shape[0], -1).norm(dim=1)
+        metrics['test_pgd10_loss'] += pgd_loss.item() * targets.size(0)
+        metrics['test_pgd10_correct'] += (pgd_outputs.max(dim=1)[1] == targets).sum().item()
+        metrics['test_pgd10_delta_norm'] += pgd_delta_norm.sum().item()
 
         # deepfool
         loop, perturbation = deepfool_train(model, inputs, overshoot=0.02, max_iter=50, norm_dist='l_2',
                                             device=args.device, random_start=False, early_stop=True)
         perturbation_norm = perturbation.view(perturbation.shape[0], -1).norm(dim=1)
+        metrics['test_df50_loop'] += loop.sum().item()
+        metrics['test_df50_perturbation_norm'] += perturbation_norm.sum().item()
 
-        test_clean_loss += clean_loss.item() * targets.size(0)
-        test_clean_correct += (clean_outputs.max(dim=1)[1] == targets).sum().item()
-        test_fgsm_loss += fgsm_loss.item() * targets.size(0)
-        test_fgsm_correct += (fgsm_outputs.max(dim=1)[1] == targets).sum().item()
-        test_fgsm_delta_norm += fgsm_delta_norm.sum().item()
-        test_pgd10_loss += pgd_loss.item() * targets.size(0)
-        test_pgd10_correct += (pgd_outputs.max(dim=1)[1] == targets).sum().item()
-        test_pgd10_delta_norm += pgd_delta_norm.sum().item()
-        test_fgsm_20_correct += (fgsm_20_outputs.max(dim=1)[1] == targets).sum().item()
-        test_fgsm_60_correct += (fgsm_60_outputs.max(dim=1)[1] == targets).sum().item()
-        test_input_grad_norm += input_grad_norm.sum().item()
-        test_df50_loop += loop.sum().item()
-        test_df50_perturbation_norm += perturbation_norm.sum().item()
-        test_total += targets.size(0)
+    metrics['test_clean_loss'] = metrics['test_clean_loss'] / metrics['test_total']
+    metrics['test_clean_correct'] = metrics['test_clean_correct'] / metrics['test_total']
+    metrics['test_input_grad_norm'] = metrics['test_input_grad_norm'] / metrics['test_total']
+    metrics['test_fgsm_loss'] = metrics['test_fgsm_loss'] / metrics['test_total']
+    metrics['test_fgsm_correct'] = metrics['test_fgsm_correct'] / metrics['test_total']
+    metrics['test_fgsm_delta_norm'] = metrics['test_fgsm_delta_norm'] / metrics['test_total']
+    metrics['test_pgd10_loss'] = metrics['test_pgd10_loss'] / metrics['test_total']
+    metrics['test_pgd10_correct'] = metrics['test_pgd10_correct'] / metrics['test_total']
+    metrics['test_pgd10_delta_norm'] = metrics['test_pgd10_delta_norm'] / metrics['test_total']
+    metrics['test_fgsm_20_loss'] = metrics['test_fgsm_20_loss'] / metrics['test_total']
+    metrics['test_fgsm_20_correct'] = metrics['test_fgsm_20_correct'] / metrics['test_total']
+    metrics['test_fgsm_60_loss'] = metrics['test_fgsm_60_loss'] / metrics['test_total']
+    metrics['test_fgsm_60_correct'] = metrics['test_fgsm_60_correct'] / metrics['test_total']
+    metrics['test1_w_clamp_loss'] = metrics['test1_w_clamp_loss'] / metrics['test_total']
+    metrics['test1_w_clamp_correct'] = metrics['test1_w_clamp_correct'] / metrics['test_total']
+    metrics['test1_wo_clamp_loss'] = metrics['test1_wo_clamp_loss'] / metrics['test_total']
+    metrics['test1_wo_clamp_correct'] = metrics['test1_wo_clamp_correct'] / metrics['test_total']
+    metrics['test2_loss'] = metrics['test2_loss'] / metrics['test_total']
+    metrics['test2_correct'] = metrics['test2_correct'] / metrics['test_total']
+    metrics['test_rs_w_clamp_loss'] = metrics['test_rs_w_clamp_loss'] / metrics['test_total']
+    metrics['test_rs_w_clamp_correct'] = metrics['test_rs_w_clamp_correct'] / metrics['test_total']
+    metrics['test_rs_wo_clamp_loss'] = metrics['test_rs_wo_clamp_loss'] / metrics['test_total']
+    metrics['test_rs_wo_clamp_correct'] = metrics['test_rs_wo_clamp_correct'] / metrics['test_total']
+    metrics['test_diff_rs_w_clamp_loss'] = metrics['test_diff_rs_w_clamp_loss'] / metrics['test_total']
+    metrics['test_diff_rs_w_clamp_correct'] = metrics['test_diff_rs_w_clamp_correct'] / metrics['test_total']
+    metrics['test_diff_rs_wo_clamp_loss'] = metrics['test_diff_rs_wo_clamp_loss'] / metrics['test_total']
+    metrics['test_diff_rs_wo_clamp_correct'] = metrics['test_diff_rs_wo_clamp_correct'] / metrics['test_total']
+    metrics['test_df50_loop'] = metrics['test_df50_loop'] / metrics['test_total']
+    metrics['test_df50_perturbation_norm'] = metrics['test_df50_perturbation_norm'] / metrics['test_total']
 
-    return test_clean_loss / test_total, 100. * test_clean_correct / test_total, \
-           test_fgsm_loss / test_total, 100. * test_fgsm_correct / test_total, test_fgsm_delta_norm / test_total, \
-           test_pgd10_loss / test_total, 100. * test_pgd10_correct / test_total, test_pgd10_delta_norm / test_total, \
-           100. * test_fgsm_20_correct / test_total, 100. * test_fgsm_60_correct / test_total, test_input_grad_norm / test_total, test_df50_loop / test_total, test_df50_perturbation_norm / test_total
+    return metrics
 
 
-def tb_writer(writer, epoch, lr, train_clean_loss, train_clean_acc, train_fgsm_loss, train_fgsm_acc, train_fgsm_delta_norm, train_fgsm_20_acc, train_fgsm_60_acc,
-              test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_fgsm_delta_norm, test_pgd10_loss, test_pgd10_acc, test_pgd10_delta_norm, test_fgsm_20_acc, test_fgsm_60_acc, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm):
+def tb_writer(writer, epoch, lr, train_clean_loss, train_clean_acc, train_fgsm_loss, train_fgsm_acc, train_fgsm_delta_norm, train_fgsm_20_loss, train_fgsm_20_acc, train_fgsm_60_loss, train_fgsm_60_acc,
+              metrics):
     writer.add_scalars('loss',
-                       {'train_clean': train_clean_loss, 'train_fgsm': train_fgsm_loss,
-                        'test_clean': test_clean_loss, 'test_fgsm': test_fgsm_loss, 'test_pgd': test_pgd10_loss}, epoch)
+                       {'train_clean': train_clean_loss, 'train_fgsm': train_fgsm_loss, 'train_fgsm_20': train_fgsm_20_loss, 'train_fgsm_60': train_fgsm_60_loss,
+                        'test_clean': metrics['test_clean_loss'], 'test_fgsm': metrics['test_fgsm_loss'], 'test_pgd': metrics['test_pgd10_loss'],
+                        'test_fgsm_20': metrics['test_fgsm_20_loss'], 'test_fgsm_60': metrics['test_fgsm_60_loss'],
+                        'test1_w_clamp': metrics['test1_w_clamp_loss'], 'test1_wo_clamp': metrics['test1_wo_clamp_loss'],
+                        'test2': metrics['test2_loss'],
+                        'test_rs_w_clamp': metrics['test_rs_w_clamp_loss'], 'test_rs_wo_clamp': metrics['test_rs_wo_clamp_loss'],
+                        'test_diff_rs_w_clamp': metrics['test_diff_rs_w_clamp_loss'], 'test_diff_rs_wo_clamp': metrics['test_diff_rs_wo_clamp_loss']}, epoch)
     writer.add_scalars('accuracy',
                        {'train_clean': train_clean_acc, 'train_fgsm': train_fgsm_acc, 'train_fgsm_20': train_fgsm_20_acc, 'train_fgsm_60': train_fgsm_60_acc,
-                        'test_clean': test_clean_acc, 'test_fgsm': test_fgsm_acc, 'test_fgsm_20': test_fgsm_20_acc, 'test_fgsm_60': test_fgsm_60_acc, 'test_pgd': test_pgd10_acc}, epoch)
+                        'test_clean': metrics['test_clean_correct'], 'test_fgsm': metrics['test_fgsm_correct'], 'test_pgd': metrics['test_pgd10_correct'],
+                        'test_fgsm_20': metrics['test_fgsm_20_correct'], 'test_fgsm_60': metrics['test_fgsm_60_correct'],
+                        'test1_w_clamp': metrics['test1_w_clamp_correct'], 'test1_wo_clamp': metrics['test1_wo_clamp_correct'],
+                        'test2': metrics['test2_correct'],
+                        'test_rs_w_clamp': metrics['test_rs_w_clamp_correct'], 'test_rs_wo_clamp': metrics['test_rs_wo_clamp_correct'],
+                        'test_diff_rs_w_clamp': metrics['test_diff_rs_w_clamp_correct'], 'test_diff_rs_wo_clamp': metrics['test_diff_rs_wo_clamp_correct']}, epoch)
     writer.add_scalar('learning rate', lr, epoch)
-    writer.add_scalar('test_input_grad_norm', test_input_grad_norm, epoch)
-    writer.add_scalar('test_df50_loop', test_df50_loop, epoch)
-    writer.add_scalars('delta_norm', {'train_fgsm': train_fgsm_delta_norm, 'test_fgsm': test_fgsm_delta_norm, 'test_pgd10': test_pgd10_delta_norm, 'test_df50': test_df50_perturbation_norm}, epoch)
+    writer.add_scalar('test_input_grad_norm', metrics['test_input_grad_norm'], epoch)
+    writer.add_scalar('test_df50_loop', metrics['test_df50_loop'], epoch)
+    writer.add_scalars('delta_norm', {'train_fgsm': train_fgsm_delta_norm, 'test_fgsm': metrics['test_fgsm_delta_norm'], 'test_pgd10': metrics['test_pgd10_delta_norm'], 'test_df50': metrics['test_df50_perturbation_norm']}, epoch)
 
 
 def main():
