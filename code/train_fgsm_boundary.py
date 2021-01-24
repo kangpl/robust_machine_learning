@@ -278,6 +278,11 @@ def main():
         step_lr_scheduler = optim.lr_scheduler.MultiStepLR(optimizer=optimizer, milestones=args.lr_change_epoch,
                                                            gamma=0.1)
 
+    if torch.cuda.device_count() > 1:
+        logger.info(f"Let's use {torch.cuda.device_count()} GPUs!")
+        model = torch.nn.DataParallel(model)
+    model = model.to(args.device)
+
     args.epsilon = (args.epsilon / 255.) / std
     if args.finetune:
         # Load checkpoint.
@@ -286,12 +291,6 @@ def main():
                                            args.resumed_model_name)), f'Error: no asked checkpoint file {args.resumed_model_name} found! '
         checkpoint = torch.load(os.path.join(CHECKPOINT_DIR, args.resumed_model_name))
         model.load_state_dict(checkpoint['model'])
-        log_resumed_info(checkpoint, logger, writer)
-
-    if torch.cuda.device_count() > 1:
-        logger.info(f"Let's use {torch.cuda.device_count()} GPUs!")
-        model = torch.nn.DataParallel(model)
-    model = model.to(args.device)
 
     logger.info(
         'Epoch \t Train Time \t Test Time \t LR \t \t Train Loss \t Train Acc \t Test Standard Loss \t Test Standard '
@@ -316,9 +315,9 @@ def main():
             train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, train_fgsm_delta_norm, test_pgd10_delta_norm)
         if args.lr_schedule == 'multistep':
             step_lr_scheduler.step()
-        if epoch % 1 == 0:
-            save_checkpoint(model, epoch + 1, train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc,
-                            test_pgd_loss, test_pgd_acc, os.path.join(CHECKPOINT_DIR, args.exp_name + f'_{epoch+1}.pth'))
+        # if epoch % 1 == 0:
+        #     save_checkpoint(model, epoch + 1, train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc,
+        #                     test_pgd_loss, test_pgd_acc, os.path.join(CHECKPOINT_DIR, args.exp_name + f'_{epoch+1}.pth'))
         if test_pgd_acc >= best_test_pgd_acc:
             save_checkpoint(model, epoch+1, train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc,
                             test_pgd_loss, test_pgd_acc, os.path.join(CHECKPOINT_DIR, args.exp_name + f'_best.pth'))
