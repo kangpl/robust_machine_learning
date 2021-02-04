@@ -105,7 +105,7 @@ def eval(args, model, testloader, criterion, finaleval=False):
         # fgsm
         delta = torch.zeros_like(inputs).to(args.device)
         if args.train_random_start:
-            delta = delta.normal_(0, 1).sign() * args.epsilon
+            delta = args.random_ratio * delta.normal_(0, 1).sign() * args.epsilon
             delta = clamp(delta, lower_limit - inputs, upper_limit - inputs)
         delta.requires_grad = True
         output = model(inputs + delta)
