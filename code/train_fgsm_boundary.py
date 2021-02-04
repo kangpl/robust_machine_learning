@@ -30,6 +30,7 @@ def get_args():
     parser.add_argument('--clamp', action='store_true')
 
     parser.add_argument('--epsilon', default=8, type=int)
+    parser.add_argument('--random_ratio', default=1, type=float)
     parser.add_argument('--train_fgsm_ratio', default=1, type=float)
     parser.add_argument('--train_random_start', action='store_true')
     parser.add_argument('--eval_pgd_ratio', default=0.25, type=float)
@@ -53,7 +54,7 @@ def train(args, model, trainloader, optimizer, criterion, step_lr_scheduler):
 
         delta = torch.zeros_like(inputs).to(args.device)
         if args.train_random_start:
-            delta = delta.normal_(0, 1).sign() * args.epsilon
+            delta = args.random_ratio * delta.normal_(0, 1).sign() * args.epsilon
             delta = clamp(delta, lower_limit - inputs, upper_limit - inputs)
         delta.requires_grad = True
         output = model(inputs + delta)
