@@ -27,6 +27,7 @@ def get_args():
     parser.add_argument('--lr_change_epoch', nargs='+', default=[100, 150], type=int)
     parser.add_argument('--batch_size', '-b', default=256, type=int)
     parser.add_argument('--num_epochs', default=200, type=int)
+    parser.add_argument('--clamp', action='store_true')
 
     parser.add_argument('--epsilon', default=8, type=int)
     parser.add_argument('--train_fgsm_ratio', default=1, type=float)
@@ -37,6 +38,7 @@ def get_args():
     parser.add_argument('--finetune', action='store_true', help='finetune the pre-trained model with adversarial '
                                                                 'samples or regularization')
     parser.add_argument('--resumed_model_name', default='standard_cifar.pth', help='the file name of resumed model')
+    parser.add_argument('--seed', default=0, type=int)
     parser.add_argument('--exp_name', default='standard_cifar', help='used as filename of saved model, '
                                                                      'tensorboard and log')
     return parser.parse_args()
@@ -61,7 +63,10 @@ def train(args, model, trainloader, optimizer, criterion, step_lr_scheduler):
             delta[:, i, :, :].uniform_(-args.epsilon[i][0][0].item(), args.epsilon[i][0][0].item())
         delta = clamp(delta, lower_limit - inputs, upper_limit - inputs)
 
-        fgsm_delta = clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), -args.epsilon, args.epsilon)
+        if args.clamp:
+            fgsm_delta = clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), -args.epsilon, args.epsilon)
+        else:
+            fgsm_delta = delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad)
         fgsm_delta = clamp(fgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
         fgsm_delta_norm = fgsm_delta.view(fgsm_delta.shape[0], -1).norm(dim=1)
 
@@ -110,7 +115,11 @@ def eval(args, model, testloader, criterion, finaleval=False):
             delta[:, i, :, :].uniform_(-args.epsilon[i][0][0].item(), args.epsilon[i][0][0].item())
         delta = clamp(delta, lower_limit - inputs, upper_limit - inputs)
 
-        fgsm_delta = clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), -args.epsilon, args.epsilon)
+        if args.clamp:
+            fgsm_delta = clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), -args.epsilon,
+                               args.epsilon)
+        else:
+            fgsm_delta = delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad)
         fgsm_delta = clamp(fgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
         fgsm_delta_norm = fgsm_delta.view(fgsm_delta.shape[0], -1).norm(dim=1)
 
@@ -190,7 +199,11 @@ def eval_init(args, writer, logger, model, trainloader, testloader, criterion, o
             delta[:, i, :, :].uniform_(-args.epsilon[i][0][0].item(), args.epsilon[i][0][0].item())
         delta = clamp(delta, lower_limit - inputs, upper_limit - inputs)
 
-        fgsm_delta = clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), -args.epsilon, args.epsilon)
+        if args.clamp:
+            fgsm_delta = clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), -args.epsilon,
+                               args.epsilon)
+        else:
+            fgsm_delta = delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad)
         fgsm_delta = clamp(fgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
         fgsm_delta_norm = fgsm_delta.view(fgsm_delta.shape[0], -1).norm(dim=1)
 
@@ -218,6 +231,9 @@ def eval_init(args, writer, logger, model, trainloader, testloader, criterion, o
 
 def main():
     args = get_args()
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed(args.seed)
 
     OUTPUT_DIR = './output'
     LOG_DIR = './output/log'
