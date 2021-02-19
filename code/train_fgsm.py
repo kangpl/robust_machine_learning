@@ -39,6 +39,7 @@ def get_args():
     parser.add_argument('--finetune', action='store_true', help='finetune the pre-trained model with adversarial '
                                                                 'samples or regularization')
     parser.add_argument('--resumed_model_name', default='standard_cifar.pth', help='the file name of resumed model')
+    parser.add_argument('--seed', default=0, type=int)
     parser.add_argument('--exp_name', default='standard_cifar', help='used as filename of saved model, '
                                                                      'tensorboard and log')
     return parser.parse_args()
@@ -229,6 +230,9 @@ def eval_init(args, writer, logger, model, trainloader, testloader, criterion, o
 
 def main():
     args = get_args()
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed(args.seed)
 
     OUTPUT_DIR = './output'
     LOG_DIR = './output/log'
