@@ -18,6 +18,7 @@ from models.resnet import ResNet18
 def get_args():
     parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
     parser.add_argument('--dataset_path', default='./data', help='path of the dataset')
+    parser.add_argument('--dataset', default='cifar10',  choices=['cifar10', 'svhn', 'cifar100'])
 
     parser.add_argument('--model', '-m', default='PreActResNet18', type=str)
     parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
@@ -30,7 +31,8 @@ def get_args():
 
     parser.add_argument('--epsilon', default=8, type=int)
     parser.add_argument('--train_pgd_ratio', default=0.5, type=float)
-    parser.add_argument('--train_random_start', action='store_true')
+    parser.add_argument('--train_pgd_attack_iters', default=2, type=int)
+    parser.add_argument('--train_pgd_restarts', default=1, type=int)
     parser.add_argument('--eval_pgd_ratio', default=0.25, type=float)
     parser.add_argument('--eval_pgd_attack_iters', default=10, type=int)
     parser.add_argument('--eval_pgd_restarts', default=1, type=int)
@@ -38,21 +40,23 @@ def get_args():
     parser.add_argument('--finetune', action='store_true', help='finetune the pre-trained model with adversarial '
                                                                 'samples or regularization')
     parser.add_argument('--resumed_model_name', default='standard_cifar.pth', help='the file name of resumed model')
+    parser.add_argument('--seed', default=0, type=int)
+    parser.add_argument('--save_epoch', action='store_true')
     parser.add_argument('--exp_name', default='standard_cifar', help='used as filename of saved model, '
                                                                      'tensorboard and log')
     return parser.parse_args()
 
 
 # Training
-def train(args, model, trainloader, optimizer, criterion, step_lr_scheduler):
+def train(args, model, trainloader, normalize, optimizer, criterion, step_lr_scheduler):
     model.train()
     train_clean_loss, train_clean_correct, train_pgd_loss, train_pgd_correct, train_pgd_delta_norm, train_total = 0, 0, 0, 0, 0, 0
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
-        pgd_delta = attack_pgd(model, inputs, targets, args.epsilon, args.train_pgd_ratio * args.epsilon,
-                               2, 1, args.device, random_start=False, early_stop=False).detach()
-        pgd_outputs = model(clamp(inputs + pgd_delta, lower_limit, upper_limit))
+        pgd_delta = attack_pgd(model, inputs, targets, normalize, args.epsilon, args.train_pgd_ratio * args.epsilon,
+                               args.train_pgd_attack_iters, args.train_pgd_restarts, args.device, random_start=False, early_stop=False).detach()
+        pgd_outputs = model(normalize(inputs + pgd_delta))
         pgd_loss = criterion(pgd_outputs, targets)
         pgd_delta_norm = pgd_delta.view(pgd_delta.shape[0], -1).norm(dim=1)
 
@@ -60,7 +64,7 @@ def train(args, model, trainloader, optimizer, criterion, step_lr_scheduler):
         pgd_loss.backward()
         optimizer.step()
 
-        clean_outputs = model(inputs)
+        clean_outputs = model(normalize(inputs))
         clean_loss = criterion(clean_outputs, targets)
 
         train_pgd_loss += pgd_loss.item() * targets.size(0)
@@ -75,7 +79,7 @@ def train(args, model, trainloader, optimizer, criterion, step_lr_scheduler):
     return train_clean_loss / train_total, 100. * train_clean_correct / train_total, train_pgd_loss / train_total, 100. * train_pgd_correct / train_total, train_pgd_delta_norm / train_total
 
 
-def eval(args, model, testloader, criterion, finaleval=False):
+def eval(args, model, testloader, normalize, criterion, finaleval=False):
     model.eval()
     test_clean_loss, test_clean_correct, test_pgd10_loss, test_pgd10_correct, test_pgd10_delta_norm, test_total = 0, 0, 0, 0, 0, 0
     test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm = 0, 0, 0
@@ -83,22 +87,22 @@ def eval(args, model, testloader, criterion, finaleval=False):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
         # clean
-        input_grad, clean_outputs, clean_loss = get_input_grad_v2(model, inputs, targets)
+        input_grad, clean_outputs, clean_loss = get_input_grad_v2(model, normalize(inputs), targets)
         input_grad_norm = input_grad.view(input_grad.shape[0], -1).norm(dim=1)
 
         # pgd
         if finaleval:
-            pgd_delta = attack_pgd(model, inputs, targets, args.epsilon, args.eval_pgd_ratio * args.epsilon, 50, 10, args.device, early_stop=True).detach()
+            pgd_delta = attack_pgd(model, inputs, targets, normalize, args.epsilon, args.eval_pgd_ratio * args.epsilon, 50, 10, args.device, early_stop=True).detach()
         else:
-            pgd_delta = attack_pgd(model, inputs, targets, args.epsilon, args.eval_pgd_ratio * args.epsilon,
+            pgd_delta = attack_pgd(model, inputs, targets, normalize, args.epsilon, args.eval_pgd_ratio * args.epsilon,
                                    args.eval_pgd_attack_iters, args.eval_pgd_restarts, args.device,
                                    early_stop=True).detach()
-        pgd_outputs = model(clamp(inputs + pgd_delta, lower_limit, upper_limit))
+        pgd_outputs = model(normalize(inputs + pgd_delta))
         pgd_loss = criterion(pgd_outputs, targets)
         pgd_delta_norm = pgd_delta.view(pgd_delta.shape[0], -1).norm(dim=1)
 
         # deepfool
-        loop, perturbation = deepfool_train(model, inputs, overshoot=0.02, max_iter=50, norm_dist='l_2',
+        loop, perturbation = deepfool_train(model, inputs, normalize, overshoot=0.02, max_iter=50, norm_dist='l_2',
                                             device=args.device, random_start=False, early_stop=True)
         perturbation_norm = perturbation.view(perturbation.shape[0], -1).norm(dim=1)
 
@@ -131,19 +135,19 @@ def tb_writer(writer, epoch, lr, train_clean_loss, train_clean_acc, train_pgd_lo
     writer.add_scalars('delta_norm', {'train_pgd2': train_pgd_delta_norm, 'test_pgd10': test_pgd10_delta_norm, 'test_df50': test_df50_perturbation_norm}, epoch)
 
 
-def eval_init(args, writer, logger, model, trainloader, testloader, criterion, opt):
+def eval_init(args, writer, logger, model, trainloader, testloader, normalize, criterion, opt):
     model.eval()
     train_clean_loss, train_clean_correct, train_pgd_loss, train_pgd_correct, train_pgd_delta_norm, train_total = 0, 0, 0, 0, 0, 0
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
-        pgd_delta = attack_pgd(model, inputs, targets, args.epsilon, args.train_pgd_ratio * args.epsilon,
-                               2, 1, args.device, random_start=False, early_stop=False).detach()
-        pgd_outputs = model(clamp(inputs + pgd_delta, lower_limit, upper_limit))
+        pgd_delta = attack_pgd(model, inputs, targets, normalize, args.epsilon, args.train_pgd_ratio * args.epsilon,
+                               args.train_pgd_attack_iters, args.train_pgd_restarts, args.device, random_start=False, early_stop=False).detach()
+        pgd_outputs = model(normalize(inputs + pgd_delta))
         pgd_loss = criterion(pgd_outputs, targets)
         pgd_delta_norm = pgd_delta.view(pgd_delta.shape[0], -1).norm(dim=1)
 
-        clean_outputs = model(inputs)
+        clean_outputs = model(normalize(inputs))
         clean_loss = criterion(clean_outputs, targets)
 
         train_pgd_loss += pgd_loss.item() * targets.size(0)
@@ -153,17 +157,20 @@ def eval_init(args, writer, logger, model, trainloader, testloader, criterion, o
         train_pgd_delta_norm += pgd_delta_norm.sum().item()
         train_total += targets.size(0)
 
-    test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm = eval(args, model, testloader, criterion)
+    test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm = eval(args, model, testloader, normalize, criterion)
     tb_writer(writer, 0, opt.param_groups[0]['lr'],
               train_clean_loss / train_total, 100. * train_clean_correct / train_total, train_pgd_loss / train_total, 100. * train_pgd_correct / train_total, train_pgd_delta_norm / train_total,
               test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm)
     logger.info(
-        '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f \t %.2f',
+        '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.3f \t %.3f',
         0, -1, -1, opt.param_groups[0]['lr'], train_pgd_loss / train_total, 100. * train_pgd_correct / train_total, test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, train_pgd_delta_norm / train_total, test_pgd10_delta_norm)
 
 
 def main():
     args = get_args()
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed(args.seed)
 
     OUTPUT_DIR = './output'
     LOG_DIR = './output/log'
@@ -194,6 +201,14 @@ def main():
     logger.info(f"model trained on {args.device}")
 
     trainloader, testloader = get_loader(args, logger)
+    if args.dataset == 'cifar10':
+        normalize = Normalize(cifar10_mu, cifar10_std)
+    elif args.dataset == 'cifar100':
+        normalize = Normalize(cifar100_mu, cifar100_std)
+    elif args.dataset == 'svhn':
+        normalize = Normalize(svhn_mu, svhn_std)
+    else:
+        raise ValueError
 
     logger.info('==> Building model..')
     if args.model == 'ResNet18':
@@ -216,7 +231,7 @@ def main():
         step_lr_scheduler = optim.lr_scheduler.MultiStepLR(optimizer=optimizer, milestones=args.lr_change_epoch,
                                                            gamma=0.1)
 
-    args.epsilon = (args.epsilon / 255.) / std
+    args.epsilon = args.epsilon / 255.
     if args.finetune:
         # Load checkpoint.
         logger.info('==> Resuming from checkpoint..')
@@ -234,27 +249,27 @@ def main():
     logger.info(
         'Epoch \t Train Time \t Test Time \t LR \t \t Train Loss \t Train Acc \t Test Standard Loss \t Test Standard '
         'Acc \t Test Attack Loss \t Test Attack Acc \t Train fgsm norm \t Test pgd norm')
-    eval_init(args, writer, logger, model, trainloader, testloader, criterion, optimizer)
+    eval_init(args, writer, logger, model, trainloader, testloader, normalize, criterion, optimizer)
 
     best_test_pgd_acc = 0
     for epoch in range(args.num_epochs):
         start_time = time.time()
-        train_clean_loss, train_clean_acc, train_pgd2_loss, train_pgd2_acc, train_pgd2_delta_norm = train(args, model, trainloader, optimizer, criterion, step_lr_scheduler)
+        train_clean_loss, train_clean_acc, train_pgd2_loss, train_pgd2_acc, train_pgd2_delta_norm = train(args, model, trainloader, normalize, optimizer, criterion, step_lr_scheduler)
         train_time = time.time()
 
-        test_clean_loss, test_clean_acc, test_pgd10_loss, test_pgd10_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm = eval(args, model, testloader, criterion)
+        test_clean_loss, test_clean_acc, test_pgd10_loss, test_pgd10_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm = eval(args, model, testloader, normalize, criterion)
         test_time = time.time()
 
         tb_writer(writer, epoch+1, optimizer.param_groups[0]['lr'],
                   train_clean_loss, train_clean_acc, train_pgd2_loss, train_pgd2_acc, train_pgd2_delta_norm,
                   test_clean_loss, test_clean_acc, test_pgd10_loss, test_pgd10_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm)
         logger.info(
-            '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f \t %.2f',
+            '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.3f \t %.3f',
             epoch+1, train_time-start_time, test_time-train_time, optimizer.param_groups[0]['lr'],
             train_pgd2_loss, train_pgd2_acc, test_clean_loss, test_clean_acc, test_pgd10_loss, test_pgd10_acc, train_pgd2_delta_norm, test_pgd10_delta_norm)
         if args.lr_schedule == 'multistep':
             step_lr_scheduler.step()
-        if epoch % 1 == 0:
+        if args.save_epoch and epoch % 1 == 0:
             save_checkpoint(model, epoch + 1, train_pgd2_loss, train_pgd2_acc, test_clean_loss, test_clean_acc,
                             test_pgd10_loss, test_pgd10_acc, os.path.join(CHECKPOINT_DIR, args.exp_name + f'_{epoch+1}.pth'))
         if test_pgd10_acc >= best_test_pgd_acc:
