@@ -52,17 +52,25 @@ def calculate_fgsm_delta(args, model, inputs, targets, normalize):
     full_delta = args.full_fgsm_ratio * args.epsilon * torch.ones_like(inputs).to(args.device)
     full_delta_norm = full_delta.view(full_delta.shape[0], -1).norm(dim=1)
 
+    zero = torch.zeros_like(inputs).to(args.device)
+    zero.requires_grad = True
+    output_clean = model(normalize(inputs+zero))
+    loss_clean = F.cross_entropy(output_clean, targets)
+    loss_clean.backward()
+    grad_clean = zero.grad.detach()
+    grad_clean_sign = torch.sign(grad_clean)
+    grad_clean_sign_norm = grad_clean_sign.view(grad_clean_sign.shape[0], -1).norm(dim=1)
+
     delta = torch.zeros_like(inputs).to(args.device)
     if args.train_random_start:
         delta.uniform_(-args.epsilon, args.epsilon)
+    delta = clamp(delta, lower_limit - inputs, upper_limit - inputs)
     delta.requires_grad = True
     output = model(normalize(inputs + delta))
     loss = F.cross_entropy(output, targets)
     loss.backward()
     grad = delta.grad.detach()
-    grad_sign = torch.sign(grad)
     delta_norm = delta.view(delta.shape[0], -1).norm(dim=1)
-    grad_sign_norm = grad_sign.view(grad_sign.shape[0], -1).norm(dim=1)
 
     if args.project:
         fgsm_delta = torch.clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), min=-args.epsilon, max=args.epsilon)
@@ -71,10 +79,12 @@ def calculate_fgsm_delta(args, model, inputs, targets, normalize):
     fgsm_delta_norm = fgsm_delta.view(fgsm_delta.shape[0], -1).norm(dim=1)
 
     cos_delta_random = cal_cos_similarity(fgsm_delta, delta, fgsm_delta_norm, delta_norm)
-    cos_delta_grad = cal_cos_similarity(fgsm_delta, grad_sign, fgsm_delta_norm, grad_sign_norm)
-    cos_random_grad = cal_cos_similarity(delta, grad_sign, delta_norm, grad_sign_norm)
+    cos_delta_grad = cal_cos_similarity(fgsm_delta, grad_clean_sign, fgsm_delta_norm, grad_clean_sign_norm)
+    cos_random_grad = cal_cos_similarity(delta, grad_clean_sign, delta_norm, grad_clean_sign_norm)
 
+    ## extend the fgsm_delta
     fgsm_delta = (full_delta_norm / fgsm_delta_norm)[:, None, None, None] * fgsm_delta
+    fgsm_delta = clamp(fgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
     fgsm_delta_norm = fgsm_delta.view(fgsm_delta.shape[0], -1).norm(dim=1)
 
     return fgsm_delta, fgsm_delta_norm, cos_delta_random, cos_delta_grad, cos_random_grad
