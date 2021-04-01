@@ -19,6 +19,7 @@ def get_args():
     parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
     parser.add_argument('--dataset_path', default='./data', help='path of the dataset')
     parser.add_argument('--dataset', default='cifar10',  choices=['cifar10', 'svhn', 'cifar100'])
+    parser.add_argument('--not_track_running_stats', action='store_true')
 
     parser.add_argument('--model', '-m', default='PreActResNet18', type=str)
     parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
@@ -248,10 +249,14 @@ def main():
             model = ResNet18(num_classes=100)
         logger.info("The model used is ResNet18")
     elif args.model == 'PreActResNet18':
+        if args.not_track_running_stats:
+            track_running_stats = False
+        else:
+            track_running_stats = True
         if args.dataset == 'cifar10' or args.dataset == 'svhn':
-            model = PreActResNet18()
+            model = PreActResNet18(track_running_stats=track_running_stats)
         elif args.dataset == 'cifar100':
-            model = PreActResNet18(num_classes=100)
+            model = PreActResNet18(num_classes=100, track_running_stats=track_running_stats)
         logger.info("The model used is PreActResNet18")
     else:
         logger.info("This model hasn't been defined ", args.model)
