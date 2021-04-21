@@ -18,7 +18,6 @@ from models.resnet import ResNet18
 def get_args():
     parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
     parser.add_argument('--dataset_path', default='./data', help='path of the dataset')
-    parser.add_argument('--dataset', default='cifar10',  choices=['cifar10', 'svhn', 'cifar100'])
 
     parser.add_argument('--model', '-m', default='PreActResNet18', type=str)
     parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
@@ -28,11 +27,12 @@ def get_args():
     parser.add_argument('--lr_change_epoch', nargs='+', default=[100, 150], type=int)
     parser.add_argument('--batch_size', '-b', default=256, type=int)
     parser.add_argument('--num_epochs', default=200, type=int)
-    parser.add_argument('--ratio', default=0, type=float)
+
+    parser.add_argument('--ratio_t', default=0, type=float)
 
     parser.add_argument('--epsilon', default=8, type=int)
-    parser.add_argument('--train_fgsm_ratio', default=1, type=float)
-    parser.add_argument('--project', action='store_true')
+    parser.add_argument('--train_fgsm_ratio', default=1, type=float,
+                        help='train_fgsm_ratio is the step size divided by epsilon')
     parser.add_argument('--eval_pgd_ratio', default=0.25, type=float)
     parser.add_argument('--eval_pgd_attack_iters', default=10, type=int)
     parser.add_argument('--eval_pgd_restarts', default=1, type=int)
@@ -56,20 +56,19 @@ def cal_delta(args, model, inputs, targets, normalize):
     delta.uniform_(-args.epsilon, args.epsilon)
     delta = clamp(delta, lower_limit - inputs, upper_limit - inputs)
 
-    delta2 = (1 - args.ratio) * delta1 + args.ratio * delta
+    delta2 = (1 - args.ratio_t) * delta1 + args.ratio_t * delta
     delta2.requires_grad = True
     output = model(normalize(inputs + delta2))
     loss = F.cross_entropy(output, targets)
     loss.backward()
     grad = delta2.grad.detach()
 
-    if args.project:
-        fgsm_delta = torch.clamp(delta1 + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), min=-args.epsilon, max=args.epsilon)
-    else:
-        fgsm_delta = delta1 + args.train_fgsm_ratio * args.epsilon * torch.sign(grad)
+    fgsm_delta = torch.clamp(delta1 + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), min=-args.epsilon,
+                             max=args.epsilon)
     fgsm_delta = clamp(fgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
     fgsm_delta_norm = fgsm_delta.view(fgsm_delta.shape[0], -1).norm(dim=1)
     return fgsm_delta, fgsm_delta_norm
+
 
 # Training
 def train(args, model, trainloader, normalize, optimizer, criterion, step_lr_scheduler):
@@ -118,7 +117,8 @@ def eval(args, model, testloader, normalize, criterion, finaleval=False):
 
         # pgd
         if finaleval:
-            pgd_delta = attack_pgd(model, inputs, targets, normalize, args.epsilon, args.eval_pgd_ratio * args.epsilon, 50, 10, args.device, early_stop=True).detach()
+            pgd_delta = attack_pgd(model, inputs, targets, normalize, args.epsilon, args.eval_pgd_ratio * args.epsilon,
+                                   50, 10, args.device, early_stop=True).detach()
         else:
             pgd_delta = attack_pgd(model, inputs, targets, normalize, args.epsilon, args.eval_pgd_ratio * args.epsilon,
                                    args.eval_pgd_attack_iters, args.eval_pgd_restarts, args.device,
@@ -151,8 +151,10 @@ def eval(args, model, testloader, normalize, criterion, finaleval=False):
            test_input_grad_norm / test_total, test_df50_loop / test_total, test_df50_perturbation_norm / test_total
 
 
-def tb_writer(writer, epoch, lr, train_clean_loss, train_clean_acc, train_fgsm_loss, train_fgsm_acc, train_fgsm_delta_norm,
-              test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_fgsm_delta_norm, test_pgd10_loss, test_pgd10_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm):
+def tb_writer(writer, epoch, lr, train_clean_loss, train_clean_acc, train_fgsm_loss, train_fgsm_acc,
+              train_fgsm_delta_norm,
+              test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_fgsm_delta_norm, test_pgd10_loss,
+              test_pgd10_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm):
     writer.add_scalars('loss',
                        {'train_clean': train_clean_loss, 'train_fgsm': train_fgsm_loss,
                         'test_clean': test_clean_loss, 'test_fgsm': test_fgsm_loss, 'test_pgd': test_pgd10_loss}, epoch)
@@ -162,7 +164,9 @@ def tb_writer(writer, epoch, lr, train_clean_loss, train_clean_acc, train_fgsm_l
     writer.add_scalar('learning rate', lr, epoch)
     writer.add_scalar('test_input_grad_norm', test_input_grad_norm, epoch)
     writer.add_scalar('test_df50_loop', test_df50_loop, epoch)
-    writer.add_scalars('delta_norm', {'train_fgsm': train_fgsm_delta_norm, 'test_fgsm': test_fgsm_delta_norm, 'test_pgd10': test_pgd10_delta_norm, 'test_df50': test_df50_perturbation_norm}, epoch)
+    writer.add_scalars('delta_norm', {'train_fgsm': train_fgsm_delta_norm, 'test_fgsm': test_fgsm_delta_norm,
+                                      'test_pgd10': test_pgd10_delta_norm, 'test_df50': test_df50_perturbation_norm},
+                       epoch)
 
 
 def eval_init(args, writer, logger, model, trainloader, testloader, normalize, criterion, opt):
@@ -185,13 +189,18 @@ def eval_init(args, writer, logger, model, trainloader, testloader, normalize, c
         train_fgsm_delta_norm += fgsm_delta_norm.sum().item()
         train_total += targets.size(0)
 
-    test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_fgsm_delta_norm, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm = eval(args, model, testloader, normalize, criterion)
+    test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_fgsm_delta_norm, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm = eval(
+        args, model, testloader, normalize, criterion)
     tb_writer(writer, 0, opt.param_groups[0]['lr'],
-              train_clean_loss / train_total, 100. * train_clean_correct / train_total, train_fgsm_loss / train_total, 100. * train_fgsm_correct / train_total, train_fgsm_delta_norm / train_total,
-              test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_fgsm_delta_norm, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm)
+              train_clean_loss / train_total, 100. * train_clean_correct / train_total, train_fgsm_loss / train_total,
+              100. * train_fgsm_correct / train_total, train_fgsm_delta_norm / train_total,
+              test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_fgsm_delta_norm, test_pgd_loss,
+              test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm)
     logger.info(
         '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f \t %.2f',
-        0, -1, -1, opt.param_groups[0]['lr'], train_fgsm_loss / train_total, 100. * train_fgsm_correct / train_total, test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, train_fgsm_delta_norm / train_total, test_pgd10_delta_norm)
+        0, -1, -1, opt.param_groups[0]['lr'], train_fgsm_loss / train_total, 100. * train_fgsm_correct / train_total,
+        test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, train_fgsm_delta_norm / train_total,
+        test_pgd10_delta_norm)
 
 
 def main():
@@ -229,21 +238,15 @@ def main():
     logger.info(args)
     logger.info(f"model trained on {args.device}")
 
-    trainloader, testloader = get_loader(args, logger, args.dataset)
+    trainloader, testloader = get_loader(args, logger)
     normalize = Normalize(cifar10_mu, cifar10_std)
 
     logger.info('==> Building model..')
     if args.model == 'ResNet18':
-        if args.dataset == 'cifar10' or args.dataset == 'svhn':
-            model = ResNet18()
-        elif args.dataset == 'cifar100':
-            model = ResNet18(num_classes=100)
+        model = ResNet18()
         logger.info("The model used is ResNet18")
     elif args.model == 'PreActResNet18':
-        if args.dataset == 'cifar10' or args.dataset == 'svhn':
-            model = PreActResNet18()
-        elif args.dataset == 'cifar100':
-            model = PreActResNet18(num_classes=100)
+        model = PreActResNet18()
         logger.info("The model used is PreActResNet18")
     else:
         logger.info("This model hasn't been defined ", args.model)
@@ -254,7 +257,7 @@ def main():
     lr_steps = args.num_epochs * len(trainloader)
     if args.lr_schedule == 'cyclic':
         step_lr_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=args.lr_min, max_lr=args.lr_max,
-            step_size_up=lr_steps / 2, step_size_down=lr_steps / 2)
+                                                              step_size_up=lr_steps / 2, step_size_down=lr_steps / 2)
     elif args.lr_schedule == 'multistep':
         step_lr_scheduler = optim.lr_scheduler.MultiStepLR(optimizer=optimizer, milestones=args.lr_change_epoch,
                                                            gamma=0.1)
@@ -280,44 +283,62 @@ def main():
     best_test_pgd_acc = 0
     for epoch in range(args.num_epochs):
         start_time = time.time()
-        train_clean_loss, train_clean_acc, train_fgsm_loss, train_fgsm_acc, train_fgsm_delta_norm = train(args, model, trainloader, normalize, optimizer, criterion, step_lr_scheduler)
+        train_clean_loss, train_clean_acc, train_fgsm_loss, train_fgsm_acc, train_fgsm_delta_norm = train(args, model,
+                                                                                                          trainloader,
+                                                                                                          normalize,
+                                                                                                          optimizer,
+                                                                                                          criterion,
+                                                                                                          step_lr_scheduler)
         train_time = time.time()
 
-        test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_fgsm_delta_norm, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm = eval(args, model, testloader, normalize, criterion)
+        test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_fgsm_delta_norm, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm = eval(
+            args, model, testloader, normalize, criterion)
         test_time = time.time()
 
-        tb_writer(writer, epoch+1, optimizer.param_groups[0]['lr'],
+        tb_writer(writer, epoch + 1, optimizer.param_groups[0]['lr'],
                   train_clean_loss, train_clean_acc, train_fgsm_loss, train_fgsm_acc, train_fgsm_delta_norm,
-                  test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_fgsm_delta_norm, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm)
+                  test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_fgsm_delta_norm, test_pgd_loss,
+                  test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop,
+                  test_df50_perturbation_norm)
         logger.info(
             '%d \t %.1f \t \t %.1f \t \t %.4f \t %.4f \t %.2f \t \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f \t %.2f',
-            epoch+1, train_time-start_time, test_time-train_time, optimizer.param_groups[0]['lr'],
-            train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc, train_fgsm_delta_norm, test_pgd10_delta_norm)
+            epoch + 1, train_time - start_time, test_time - train_time, optimizer.param_groups[0]['lr'],
+            train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc, test_pgd_loss, test_pgd_acc,
+            train_fgsm_delta_norm, test_pgd10_delta_norm)
         if args.lr_schedule == 'multistep':
             step_lr_scheduler.step()
         if args.save_epoch and epoch % 1 == 0:
             save_checkpoint(model, epoch + 1, train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc,
-                            test_pgd_loss, test_pgd_acc, os.path.join(CHECKPOINT_DIR, args.exp_name + f'_{epoch+1}.pth'))
+                            test_pgd_loss, test_pgd_acc,
+                            os.path.join(CHECKPOINT_DIR, args.exp_name + f'_{epoch + 1}.pth'))
         if test_pgd_acc >= best_test_pgd_acc:
-            save_checkpoint(model, epoch+1, train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc,
+            save_checkpoint(model, epoch + 1, train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc,
                             test_pgd_loss, test_pgd_acc, os.path.join(CHECKPOINT_DIR, args.exp_name + f'_best.pth'))
             best_test_pgd_acc = test_pgd_acc
 
-    save_checkpoint(model, epoch+1, train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc, test_pgd_loss,
+    save_checkpoint(model, epoch + 1, train_fgsm_loss, train_fgsm_acc, test_clean_loss, test_clean_acc, test_pgd_loss,
                     test_pgd_acc, os.path.join(CHECKPOINT_DIR, args.exp_name + f'_final.pth'))
 
     # Evaluate best and final
     logger.info('best')
     checkpoint = torch.load(os.path.join(CHECKPOINT_DIR, args.exp_name + f'_best.pth'))
     model.load_state_dict(checkpoint['model'])
-    best_clean_loss, best_clean_acc, _, _, _, best_pgd_loss, best_pgd_acc, best_pgd_delta_norm, _, _, _ = eval(args, model, testloader, normalize, criterion, finaleval=True)
-    logger.info('%d \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f', checkpoint['epoch'], best_clean_loss, best_clean_acc, best_pgd_loss, best_pgd_acc, best_pgd_delta_norm)
+    best_clean_loss, best_clean_acc, _, _, _, best_pgd_loss, best_pgd_acc, best_pgd_delta_norm, _, _, _ = eval(args,
+                                                                                                               model,
+                                                                                                               testloader,
+                                                                                                               normalize,
+                                                                                                               criterion,
+                                                                                                               finaleval=True)
+    logger.info('%d \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f', checkpoint['epoch'], best_clean_loss,
+                best_clean_acc, best_pgd_loss, best_pgd_acc, best_pgd_delta_norm)
 
     logger.info('final')
     checkpoint = torch.load(os.path.join(CHECKPOINT_DIR, args.exp_name + f'_final.pth'))
     model.load_state_dict(checkpoint['model'])
-    final_clean_loss, final_clean_acc, _, _, _, final_pgd_loss, final_pgd_acc, final_pgd_delta_norm, _, _, _ = eval(args, model, testloader, normalize, criterion, finaleval=True)
-    logger.info('%d \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f', checkpoint['epoch'], final_clean_loss, final_clean_acc, final_pgd_loss, final_pgd_acc, final_pgd_delta_norm)
+    final_clean_loss, final_clean_acc, _, _, _, final_pgd_loss, final_pgd_acc, final_pgd_delta_norm, _, _, _ = eval(
+        args, model, testloader, normalize, criterion, finaleval=True)
+    logger.info('%d \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f', checkpoint['epoch'], final_clean_loss,
+                final_clean_acc, final_pgd_loss, final_pgd_acc, final_pgd_delta_norm)
 
     writer.close()
 

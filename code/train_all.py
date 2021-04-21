@@ -34,8 +34,8 @@ def get_args():
     parser.add_argument('--epsilon', default=8, type=int)
     parser.add_argument('--train_fgsm_ratio', default=1, type=float,
                         help='train_fgsm_ratio is the step size divided by epsilon')
-    parser.add_argument('--project', action='store_true',
-                        help='whether to project the perturbation back to the l_infty ball')
+    parser.add_argument('--not_project', action='store_true',
+                        help='set to do not project the perturbation back to the l_infty ball')
     parser.add_argument('--random_start_type', default='uniform', choices=['none', 'uniform', 'boundary'])
     parser.add_argument('--eval_pgd_ratio', default=0.25, type=float)
     parser.add_argument('--eval_pgd_attack_iters', default=10, type=int)
@@ -64,11 +64,11 @@ def calculate_fgsm_delta(args, model, inputs, targets, normalize):
     loss.backward()
     grad = delta.grad.detach()
 
-    if args.project:
+    if args.not_project:
+        fgsm_delta = delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad)
+    else:
         fgsm_delta = torch.clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), min=-args.epsilon,
                                  max=args.epsilon)
-    else:
-        fgsm_delta = delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad)
     fgsm_delta = clamp(fgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
     fgsm_delta_norm = fgsm_delta.view(fgsm_delta.shape[0], -1).norm(dim=1)
     return fgsm_delta, fgsm_delta_norm
