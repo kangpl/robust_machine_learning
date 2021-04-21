@@ -14,7 +14,6 @@ cifar10_std = (0.2470, 0.2435, 0.2616)
 cifar10_mu = torch.tensor(cifar10_mean).view(3, 1, 1).cuda()
 cifar10_std = torch.tensor(cifar10_std).view(3, 1, 1).cuda()
 
-
 upper_limit, lower_limit = 1, 0
 
 
@@ -167,4 +166,3 @@ def save_checkpoint(model, epoch, train_loss, train_acc, test_standard_loss, tes
         'epoch': epoch,
     }
     torch.save(state, dir)
-

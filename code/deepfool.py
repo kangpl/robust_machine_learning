@@ -3,7 +3,8 @@ import copy
 from utils.util import *
 
 
-def deepfool_train(model, inputs, normalize, overshoot=0.02, max_iter=50, norm_dist='l_inf', device='cuda', random_start=True, norm_rs='l_inf', epsilon=-1, early_stop=False):
+def deepfool_train(model, inputs, normalize, overshoot=0.02, max_iter=50, norm_dist='l_inf', device='cuda',
+                   random_start=True, epsilon=-1, early_stop=False):
     r_tot = torch.zeros(inputs.shape).to(device)
     delta = torch.zeros(inputs.shape).to(device)
     if random_start:
@@ -27,12 +28,14 @@ def deepfool_train(model, inputs, normalize, overshoot=0.02, max_iter=50, norm_d
 
         cur_t = output.gather(1, I[:, 1].view(-1, 1)).flatten()
         ori_t = output.gather(1, labels.view(-1, 1)).flatten()
-        w = torch.autograd.grad(cur_t - ori_t, pert_inputs, grad_outputs=torch.ones(labels.size()).to(device), create_graph=True)[0].detach()
+        w = torch.autograd.grad(cur_t - ori_t, pert_inputs, grad_outputs=torch.ones(labels.size()).to(device),
+                                create_graph=True)[0].detach()
         f = (cur_t - ori_t).detach()
 
         if norm_dist == 'l_2':
             pert = abs(f) / torch.norm(w.view(w.shape[0], -1), p=2, dim=1)
-            r_i = (pert[index, None, None, None] + 1e-4) * w[index] / torch.norm(w[index].view(w[index].shape[0], -1), dim=1).view(-1, 1, 1, 1)
+            r_i = (pert[index, None, None, None] + 1e-4) * w[index] / torch.norm(w[index].view(w[index].shape[0], -1),
+                                                                                 dim=1).view(-1, 1, 1, 1)
         elif norm_dist == 'l_inf':
             pert = abs(f) / torch.norm(w.view(w.shape[0], -1), p=1, dim=1)
             r_i = (pert[index, None, None, None] + 1e-9) * w[index].sign()
