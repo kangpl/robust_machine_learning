@@ -14,30 +14,8 @@ cifar10_std = (0.2470, 0.2435, 0.2616)
 cifar10_mu = torch.tensor(cifar10_mean).view(3, 1, 1).cuda()
 cifar10_std = torch.tensor(cifar10_std).view(3, 1, 1).cuda()
 
-cifar100_mean = (0.5070751592371323, 0.48654887331495095, 0.4409178433670343)
-cifar100_std = (0.2673342858792401, 0.2564384629170883, 0.27615047132568404)
-cifar100_mu = torch.tensor(cifar100_mean).view(3, 1, 1).cuda()
-cifar100_std = torch.tensor(cifar100_std).view(3, 1, 1).cuda()
-
-svhn_mean = (0.5, 0.5, 0.5)
-svhn_std = (0.5, 0.5, 0.5)
-svhn_mu = torch.tensor(svhn_mean).view(3, 1, 1).cuda()
-svhn_std = torch.tensor(svhn_std).view(3, 1, 1).cuda()
 
 upper_limit, lower_limit = 1, 0
-
-
-class Alpha:
-    def __init__(self, warm_up_epochs, len_of_loader, dataset='cifar10'):
-        self.warm_up_epochs = warm_up_epochs
-        self.len_of_loader = len_of_loader
-        self.dataset = dataset
-        self.iteration = 0
-        self.max_iterations = warm_up_epochs * len_of_loader
-
-    def get_warm_up_ratio(self):
-        self.iteration = self.iteration + 1
-        return min(self.iteration / self.max_iterations, 1) if self.dataset == 'svhn' else 1
 
 
 class Normalize:
@@ -51,11 +29,6 @@ class Normalize:
 
 def clamp(X, lower_limit, upper_limit):
     return torch.max(torch.min(X, upper_limit), lower_limit)
-
-
-def get_batch_l2_norm(v):
-    norms = (v ** 2).sum([1, 2, 3]) ** 0.5
-    return norms
 
 
 def get_mean_and_std():
@@ -162,18 +135,6 @@ def attack_pgd(model, X, y, normalize, epsilon, alpha, attack_iters, restarts, d
     return max_delta
 
 
-def get_input_grad(model, X, y, delta_init='none', backprop=False, device='cuda'):
-    if delta_init == 'none':
-        delta_init = torch.zeros_like(X, requires_grad=True).to(device)
-
-    output = model(X + delta_init)
-    loss = F.cross_entropy(output, y)
-    grad = torch.autograd.grad(loss, delta_init, create_graph=True if backprop else False)[0]
-    if not backprop:
-        grad = grad.detach()
-    return grad
-
-
 def get_input_grad_v2(model, X, y):
     X.requires_grad_()
     output = model(X)
@@ -206,19 +167,4 @@ def save_checkpoint(model, epoch, train_loss, train_acc, test_standard_loss, tes
         'epoch': epoch,
     }
     torch.save(state, dir)
-
-
-def log_resumed_info(checkpoint, logger):
-    resumed_epoch = checkpoint['epoch']
-    resumed_train_loss = checkpoint['train_loss']
-    resumed_train_acc = checkpoint['train_acc']
-    resumed_test_standard_loss = checkpoint['test_standard_loss']
-    resumed_test_standard_acc = checkpoint['test_standard_acc']
-    resumed_test_attack_loss = checkpoint['test_attack_loss']
-    resumed_test_attack_acc = checkpoint['test_attack_acc']
-
-    logger.info(
-        f"finetune from epoch {resumed_epoch}, train loss {resumed_train_loss}, train acc {resumed_train_acc}, Test "
-        f"Standard Loss {resumed_test_standard_loss}, Test Standard Acc {resumed_test_standard_acc}, Test Attack Loss "
-        f"{resumed_test_attack_loss}, Test Attack Acc {resumed_test_attack_acc}")
 

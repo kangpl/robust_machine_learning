@@ -55,7 +55,7 @@ def train(args, model, trainloader, normalize, optimizer, criterion, step_lr_sch
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
         pgd_delta = attack_pgd(model, inputs, targets, normalize, args.epsilon, args.train_pgd_ratio * args.epsilon,
-                               args.train_pgd_attack_iters, args.train_pgd_restarts, args.device, random_start=False, early_stop=False).detach()
+                               args.train_pgd_attack_iters, args.train_pgd_restarts, args.device, random_start=True, early_stop=False).detach()
         pgd_outputs = model(normalize(inputs + pgd_delta))
         pgd_loss = criterion(pgd_outputs, targets)
         pgd_delta_norm = pgd_delta.view(pgd_delta.shape[0], -1).norm(dim=1)
@@ -142,7 +142,7 @@ def eval_init(args, writer, logger, model, trainloader, testloader, normalize, c
         inputs, targets = inputs.to(args.device), targets.to(args.device)
 
         pgd_delta = attack_pgd(model, inputs, targets, normalize, args.epsilon, args.train_pgd_ratio * args.epsilon,
-                               args.train_pgd_attack_iters, args.train_pgd_restarts, args.device, random_start=False, early_stop=False).detach()
+                               args.train_pgd_attack_iters, args.train_pgd_restarts, args.device, random_start=True, early_stop=False).detach()
         pgd_outputs = model(normalize(inputs + pgd_delta))
         pgd_loss = criterion(pgd_outputs, targets)
         pgd_delta_norm = pgd_delta.view(pgd_delta.shape[0], -1).norm(dim=1)
@@ -284,13 +284,13 @@ def main():
     logger.info('best')
     checkpoint = torch.load(os.path.join(CHECKPOINT_DIR, args.exp_name + f'_best.pth'))
     model.load_state_dict(checkpoint['model'])
-    best_clean_loss, best_clean_acc, best_pgd_loss, best_pgd_acc, best_pgd_delta_norm, _, _, _ = eval(args, model, testloader, criterion, finaleval=True)
+    best_clean_loss, best_clean_acc, best_pgd_loss, best_pgd_acc, best_pgd_delta_norm, _, _, _ = eval(args, model, testloader, normalize, criterion, finaleval=True)
     logger.info('%d \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f', checkpoint['epoch'], best_clean_loss, best_clean_acc, best_pgd_loss, best_pgd_acc, best_pgd_delta_norm)
 
     logger.info('final')
     checkpoint = torch.load(os.path.join(CHECKPOINT_DIR, args.exp_name + f'_final.pth'))
     model.load_state_dict(checkpoint['model'])
-    final_clean_loss, final_clean_acc, final_pgd_loss, final_pgd_acc, final_pgd_delta_norm, _, _, _ = eval(args, model, testloader, criterion, finaleval=True)
+    final_clean_loss, final_clean_acc, final_pgd_loss, final_pgd_acc, final_pgd_delta_norm, _, _, _ = eval(args, model, testloader, normalize, criterion, finaleval=True)
     logger.info('%d \t %.4f \t \t %.2f \t \t \t %.4f \t \t %.2f \t %.2f', checkpoint['epoch'], final_clean_loss, final_clean_acc, final_pgd_loss, final_pgd_acc, final_pgd_delta_norm)
 
     writer.close()

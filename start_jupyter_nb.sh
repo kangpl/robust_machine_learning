@@ -17,7 +17,7 @@ function print_usage {
         echo -e "RUN_TIME\t\tRun time limit for the jupyter notebook on the cluster (HH:MM)"
         echo -e "MEM_PER_CORE\t\tMemory limit in MB per core\n"
         echo -e "Example:\n"
-        echo -e "./start_jupyter_nb.sh Euler sfux 4 01:20 2048\n"
+        echo -e "./start_jupyter_nb.sh LeoOpen pekang 8 08:20 2048\n"
 }
 
 # if number of command line arguments is different from 5 or if $1==-h or $1==--help
@@ -114,7 +114,7 @@ ENDSSH
 # run the jupyter notebook job on Euler/Leonhard Open and save ip, port and the token
 # in the files jnbip and jninfo in the home directory of the user on Euler/Leonhard Open
 echo -e "Connecting to $CLUSTERNAME to start jupyter notebook in a batch job"
-ssh $USERNAME@$CHOSTNAME bsub -n $NUM_CORES -W $RUN_TIME -R "rusage[mem=$MEM_PER_CORE,ngpus_excl_p=2]"  <<ENDBSUB
+ssh $USERNAME@$CHOSTNAME bsub -n $NUM_CORES -W $RUN_TIME -R "rusage[mem=$MEM_PER_CORE,ngpus_excl_p=4]"  <<ENDBSUB
 module load $PCOMMAND
 export XDG_RUNTIME_DIR=
 IP_REMOTE="\$(hostname -i)"

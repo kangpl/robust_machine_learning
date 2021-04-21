@@ -12,7 +12,7 @@ function print_usage {
         echo -e "RUN_TIME\t\tRun time limit for the jupyter notebook on the cluster (HH:MM)"
         echo -e "LOG_DIR\t\tThe directory where tensorboard log locates\n"
         echo -e "Example:\n"
-        echo -e "./start_tensorboard.sh LeoOpen pekang 04:00 cifar10_fgsm_16_preActResNet18_add_norm_std_exp4\n"
+        echo -e "./start_tensorboard.sh LeoOpen pekang 08:00 fgsm_10_DF_FGSM_PGD_cos_exp1\n"
 }
 
 # if number of command line arguments is different from 4 or if $1==-h or $1==--help
@@ -81,7 +81,7 @@ ENDSSH
 # run the tensorboard job on Euler/Leonhard Open and save ip and port
 # in the files tbip and tbinfo in the home directory of the user on Euler/Leonhard Open
 echo -e "Connecting to $CLUSTERNAME to start tensorboard in a batch job"
-ssh $USERNAME@$CHOSTNAME bsub -W $RUN_TIME  <<ENDBSUB
+ssh $USERNAME@$CHOSTNAME bsub -W $RUN_TIME -R "rusage[mem=2048]" <<ENDBSUB
 module load $PCOMMAND
 export XDG_RUNTIME_DIR=
 IP_REMOTE="\$(hostname -i)"

@@ -15,6 +15,7 @@ from deepfool import *
 def get_args():
     parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
     parser.add_argument('--dataset_path', default='./data', help='path of the dataset')
+    parser.add_argument('--dataset', default='cifar10',  choices=['cifar10', 'svhn', 'cifar100'])
 
     parser.add_argument('--epsilon', default=8, type=int)
     parser.add_argument('--model', '-m', default='PreActResNet18', type=str)
@@ -29,7 +30,7 @@ def get_args():
     return parser.parse_args()
 
 
-def eval(args, model, testloader):
+def eval(args, model, testloader, normalize):
     model.eval()
     metrics = {"test_clean_correct": 0,
                "test_df10_wors_correct": 0,
@@ -58,29 +59,30 @@ def eval(args, model, testloader):
         inputs, targets = inputs.to(args.device), targets.to(args.device)
         metrics['test_total'] += targets.size(0)
         # clean
-        clean_outputs = model(inputs)
+        clean_outputs = model(normalize(inputs))
         metrics['test_clean_correct'] += (clean_outputs.max(dim=1)[1] == targets).sum().item()
 
-        _, perturbation = deepfool_train(model, inputs, overshoot=args.train_overshoot,
+        _, perturbation = deepfool_train(model, inputs, normalize, overshoot=args.train_overshoot,
                                          max_iter=1,
                                          norm_dist=args.train_deepfool_norm_dist, device=args.device,
                                          random_start=False, early_stop=False)
-        perturbation = clamp(perturbation, -args.clamp * args.epsilon, args.clamp * args.epsilon)
+        perturbation = torch.clamp(perturbation, min=-args.clamp * args.epsilon, max=args.clamp * args.epsilon)
         perturbation = clamp(perturbation, lower_limit - inputs, upper_limit - inputs).detach()
 
         for i in range(10, 101, 10):
             df_perturbation = i / 100. * perturbation
-            df_outputs = model(inputs + df_perturbation)
+            df_perturbation = clamp(df_perturbation, lower_limit - inputs, upper_limit - inputs).detach()
+            df_outputs = model(normalize(inputs + df_perturbation))
             metrics["test_df" + str(i) + "_wors_correct"] += (df_outputs.max(dim=1)[1] == targets).sum().item()
 
-        pgd_delta = attack_pgd(model, inputs, targets, args.epsilon, 0.25 * args.epsilon, 10, 1, args.device, early_stop=True).detach()
-        pgd_outputs = model(clamp(inputs + pgd_delta, lower_limit, upper_limit))
+        pgd_delta = attack_pgd(model, inputs, targets, normalize, args.epsilon, 0.25 * args.epsilon, 10, 1, args.device, early_stop=True).detach()
+        pgd_outputs = model(normalize(inputs + pgd_delta))
         metrics["test_pgd10_correct"] += (pgd_outputs.max(dim=1)[1] == targets).sum().item()
 
-    metrics["test_clean_correct"] = metrics["test_clean_correct"] / metrics["test_total"]
+    metrics["test_clean_correct"] = 100 * metrics["test_clean_correct"] / metrics["test_total"]
     for i in range(10, 101, 10):
-        metrics["test_df" + str(i) + "_wors_correct"] = metrics["test_df" + str(i) + "_wors_correct"] / metrics["test_total"]
-    metrics["test_pgd10_correct"] = metrics["test_pgd10_correct"] / metrics["test_total"]
+        metrics["test_df" + str(i) + "_wors_correct"] = 100 * metrics["test_df" + str(i) + "_wors_correct"] / metrics["test_total"]
+    metrics["test_pgd10_correct"] = 100 * metrics["test_pgd10_correct"] / metrics["test_total"]
 
     return metrics
 
@@ -114,13 +116,13 @@ def main():
 
     transform_test = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize(cifar10_mean, cifar10_std),
     ])
 
     testset = datasets.CIFAR10(
         root=args.dataset_path, train=False, download=True, transform=transform_test)
     testloader = torch.utils.data.DataLoader(
         testset, batch_size=args.batch_size, shuffle=False, num_workers=2)
+    normalize = Normalize(cifar10_mu, cifar10_std)
 
     logger.info('==> Building model..')
     if args.model == 'ResNet18':
@@ -136,7 +138,7 @@ def main():
         logger.info(f"Let's use {torch.cuda.device_count()} GPUs!")
         model = torch.nn.DataParallel(model)
     model = model.to(args.device)
-    args.epsilon = (args.epsilon / 255.) / std
+    args.epsilon = args.epsilon / 255.
 
     logger.info(
         'epoch \t clean \t wors 10-100 \t pgd10')
@@ -144,7 +146,7 @@ def main():
     for epoch in range(1, 201, args.interval):
         checkpoint = torch.load(os.path.join(CHECKPOINT_DIR, args.resumed_model_name + f'_{epoch}.pth'))
         model.load_state_dict(checkpoint['model'])
-        metrics = eval(args, model, testloader)
+        metrics = eval(args, model, testloader, normalize)
         logger.info('%d %.2f  %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f  %.2f',
                     checkpoint['epoch'],
                     metrics["test_clean_correct"],
