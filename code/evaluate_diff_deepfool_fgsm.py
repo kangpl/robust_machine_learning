@@ -9,7 +9,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from models.preact_resnet import PreActResNet18
 from models.resnet import ResNet18
-from deepfool import *
+from utils.deepfool import *
 
 
 def get_args():

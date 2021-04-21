@@ -10,7 +10,7 @@ import torch.optim as optim
 from torch.backends import cudnn
 from torch.utils.tensorboard import SummaryWriter
 
-from deepfool import *
+from utils.deepfool import *
 from models.preact_resnet import PreActResNet18
 from models.resnet import ResNet18
 

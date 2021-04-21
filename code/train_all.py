@@ -10,7 +10,7 @@ import torch.optim as optim
 from torch.backends import cudnn
 from torch.utils.tensorboard import SummaryWriter
 
-from deepfool import *
+from utils.deepfool import *
 from models.preact_resnet import PreActResNet18
 from models.resnet import ResNet18
 
@@ -18,8 +18,7 @@ from models.resnet import ResNet18
 def get_args():
     parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
     parser.add_argument('--dataset_path', default='./data', help='path of the dataset')
-    parser.add_argument('--dataset', default='cifar10',  choices=['cifar10', 'svhn', 'cifar100'])
-    parser.add_argument('--not_track_running_stats', action='store_true')
+    parser.add_argument('--not_track_running_stats', action='store_true', help='whether to track the running stats of BN layer')
 
     parser.add_argument('--model', '-m', default='PreActResNet18', type=str)
     parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
@@ -32,7 +31,7 @@ def get_args():
 
     parser.add_argument('--epsilon', default=8, type=int)
     parser.add_argument('--train_fgsm_ratio', default=1, type=float)
-    parser.add_argument('--project', action='store_true')
+    parser.add_argument('--project', action='store_true', help='whether project the perturbation to the l_infty ball')
     parser.add_argument('--random_start_type', default='uniform', choices=['none', 'uniform', 'boundary'])
     parser.add_argument('--eval_pgd_ratio', default=0.25, type=float)
     parser.add_argument('--eval_pgd_attack_iters', default=10, type=int)
@@ -48,7 +47,7 @@ def get_args():
     return parser.parse_args()
 
 
-def calculate_fgsm_delta(args, model, inputs, targets, normalize, alpha=None):
+def calculate_fgsm_delta(args, model, inputs, targets, normalize):
     delta = torch.zeros_like(inputs).to(args.device)
     if args.random_start_type == 'uniform':
         delta.uniform_(-args.epsilon, args.epsilon)
@@ -61,11 +60,10 @@ def calculate_fgsm_delta(args, model, inputs, targets, normalize, alpha=None):
     loss.backward()
     grad = delta.grad.detach()
 
-    ratio = alpha.get_warm_up_ratio() if alpha is not None else 1
     if args.project:
-        fgsm_delta = torch.clamp(delta + ratio * args.train_fgsm_ratio * args.epsilon * torch.sign(grad), min=-args.epsilon, max=args.epsilon)
+        fgsm_delta = torch.clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), min=-args.epsilon, max=args.epsilon)
     else:
-        fgsm_delta = delta + ratio * args.train_fgsm_ratio * args.epsilon * torch.sign(grad)
+        fgsm_delta = delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad)
     fgsm_delta = clamp(fgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
     fgsm_delta_norm = fgsm_delta.view(fgsm_delta.shape[0], -1).norm(dim=1)
     return fgsm_delta, fgsm_delta_norm
@@ -230,33 +228,18 @@ def main():
     logger.info(f"model trained on {args.device}")
 
     trainloader, testloader = get_loader(args, logger, args.dataset)
-
-    if args.dataset == 'cifar10':
-        normalize = Normalize(cifar10_mu, cifar10_std)
-    elif args.dataset == 'cifar100':
-        normalize = Normalize(cifar100_mu, cifar100_std)
-    elif args.dataset == 'svhn':
-        normalize = Normalize(svhn_mu, svhn_std)
-    else:
-        raise ValueError
-    alpha = Alpha(5, len(trainloader), args.dataset)
+    normalize = Normalize(cifar10_mu, cifar10_std)
 
     logger.info('==> Building model..')
     if args.model == 'ResNet18':
-        if args.dataset == 'cifar10' or args.dataset == 'svhn':
-            model = ResNet18()
-        elif args.dataset == 'cifar100':
-            model = ResNet18(num_classes=100)
+        model = ResNet18()
         logger.info("The model used is ResNet18")
     elif args.model == 'PreActResNet18':
         if args.not_track_running_stats:
             track_running_stats = False
         else:
             track_running_stats = True
-        if args.dataset == 'cifar10' or args.dataset == 'svhn':
-            model = PreActResNet18(track_running_stats=track_running_stats)
-        elif args.dataset == 'cifar100':
-            model = PreActResNet18(num_classes=100, track_running_stats=track_running_stats)
+        model = PreActResNet18(track_running_stats=track_running_stats)
         logger.info("The model used is PreActResNet18")
     else:
         logger.info("This model hasn't been defined ", args.model)
@@ -292,7 +275,7 @@ def main():
     best_test_pgd_acc = 0
     for epoch in range(args.num_epochs):
         start_time = time.time()
-        train_clean_loss, train_clean_acc, train_fgsm_loss, train_fgsm_acc, train_fgsm_delta_norm = train(args, model, trainloader, normalize, alpha, optimizer, criterion, step_lr_scheduler)
+        train_clean_loss, train_clean_acc, train_fgsm_loss, train_fgsm_acc, train_fgsm_delta_norm = train(args, model, trainloader, normalize, optimizer, criterion, step_lr_scheduler)
         train_time = time.time()
 
         test_clean_loss, test_clean_acc, test_fgsm_loss, test_fgsm_acc, test_fgsm_delta_norm, test_pgd_loss, test_pgd_acc, test_pgd10_delta_norm, test_input_grad_norm, test_df50_loop, test_df50_perturbation_norm = eval(args, model, testloader, normalize, criterion)
