@@ -15,7 +15,6 @@ from utils.deepfool import *
 def get_args():
     parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
     parser.add_argument('--dataset_path', default='./data', help='path of the dataset')
-    parser.add_argument('--dataset', default='cifar10',  choices=['cifar10', 'svhn', 'cifar100'])
 
     parser.add_argument('--epsilon', default=8, type=int)
     parser.add_argument('--model', '-m', default='PreActResNet18', type=str)
@@ -55,7 +54,8 @@ def eval(args, model, testloader, normalize):
                                          max_iter=1,
                                          norm_dist=args.train_deepfool_norm_dist, device=args.device,
                                          random_start=False, early_stop=False)
-        perturbation = args.epsilon * torch.sign(perturbation)
+        perturbation = torch.clamp(perturbation, min=-args.epsilon, max=args.epsilon)
+        perturbation = clamp(perturbation, lower_limit - inputs, upper_limit - inputs).detach()
 
         for i in range(10, 101, 10):
             df_perturbation = i / 100. * perturbation

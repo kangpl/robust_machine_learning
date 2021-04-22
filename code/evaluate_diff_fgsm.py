@@ -15,7 +15,6 @@ from utils.deepfool import *
 def get_args():
     parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
     parser.add_argument('--dataset_path', default='./data', help='path of the dataset')
-    parser.add_argument('--dataset', default='cifar10',  choices=['cifar10', 'svhn', 'cifar100'])
 
     parser.add_argument('--epsilon', default=8, type=int)
     parser.add_argument('--model', '-m', default='PreActResNet18', type=str)
