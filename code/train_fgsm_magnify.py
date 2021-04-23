@@ -32,8 +32,6 @@ def get_args():
     parser.add_argument('--epsilon', default=8, type=int)
     parser.add_argument('--train_fgsm_ratio', default=1, type=float,
                         help='train_fgsm_ratio is the step size divided by epsilon')
-    parser.add_argument('--train_random_start', action='store_true',
-                        help='whether to add uniform random initialization')
     parser.add_argument('--eval_pgd_ratio', default=0.25, type=float)
     parser.add_argument('--eval_pgd_attack_iters', default=10, type=int)
     parser.add_argument('--eval_pgd_restarts', default=1, type=int)
@@ -62,8 +60,7 @@ def calculate_fgsm_delta(args, model, inputs, targets, normalize):
     grad_clean_sign_norm = grad_clean_sign.view(grad_clean_sign.shape[0], -1).norm(dim=1)
 
     delta = torch.zeros_like(inputs).to(args.device)
-    if args.train_random_start:
-        delta.uniform_(-args.epsilon, args.epsilon)
+    delta.uniform_(-args.epsilon, args.epsilon)
     delta = clamp(delta, lower_limit - inputs, upper_limit - inputs)
     delta.requires_grad = True
     output = model(normalize(inputs + delta))

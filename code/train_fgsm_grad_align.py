@@ -33,7 +33,7 @@ def get_args():
     parser.add_argument('--eval_pgd_ratio', default=0.25, type=float)
     parser.add_argument('--eval_pgd_attack_iters', default=10, type=int)
     parser.add_argument('--eval_pgd_restarts', default=1, type=int)
-    parser.add_argument('--grad_align_cos_lambda', default=1000, type=float,
+    parser.add_argument('--grad_align_cos_lambda', default=2, type=float,
                         help='coefficient of the cosine gradient alignment regularizer')
 
     parser.add_argument('--finetune', action='store_true', help='finetune the pre-trained model with adversarial '

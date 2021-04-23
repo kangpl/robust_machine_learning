@@ -18,8 +18,6 @@ from models.resnet import ResNet18
 def get_args():
     parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
     parser.add_argument('--dataset_path', default='./data', help='path of the dataset')
-    parser.add_argument('--not_track_running_stats', action='store_true',
-                        help='whether to track the running stats of BN layer')
 
     parser.add_argument('--model', '-m', default='PreActResNet18', type=str)
     parser.add_argument('--lr_schedule', default='multistep', choices=['multistep', 'constant', 'cyclic'])
@@ -40,6 +38,8 @@ def get_args():
     parser.add_argument('--eval_pgd_ratio', default=0.25, type=float)
     parser.add_argument('--eval_pgd_attack_iters', default=10, type=int)
     parser.add_argument('--eval_pgd_restarts', default=1, type=int)
+    parser.add_argument('--not_track_running_stats', action='store_true',
+                        help='whether to track the running stats of BN layer')
 
     parser.add_argument('--finetune', action='store_true', help='finetune the pre-trained model with adversarial '
                                                                 'samples or regularization')
