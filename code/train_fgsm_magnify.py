@@ -247,7 +247,7 @@ def main():
     OUTPUT_DIR = './output'
     LOG_DIR = './output/log'
     TENSORBOARD_DIR = './output/tensorboard'
-    CHECKPOINT_DIR = '../../../../scratch/pekang/checkpoint/'
+    CHECKPOINT_DIR = './output/checkpoint/'
     if not os.path.exists(OUTPUT_DIR):
         os.mkdir(OUTPUT_DIR)
     if not os.path.exists(LOG_DIR):

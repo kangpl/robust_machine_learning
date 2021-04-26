@@ -64,11 +64,14 @@ def calculate_fgsm_delta(args, model, inputs, targets, normalize):
     loss.backward()
     grad = delta.grad.detach()
 
+    # whether to project fgsm_delta to norm bounded threat model
     if args.not_project:
         fgsm_delta = delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad)
     else:
         fgsm_delta = torch.clamp(delta + args.train_fgsm_ratio * args.epsilon * torch.sign(grad), min=-args.epsilon,
                                  max=args.epsilon)
+
+    # project to [0, 1] to make sure input + fgsm_delta is a valid input
     fgsm_delta = clamp(fgsm_delta, lower_limit - inputs, upper_limit - inputs).detach()
     fgsm_delta_norm = fgsm_delta.view(fgsm_delta.shape[0], -1).norm(dim=1)
     return fgsm_delta, fgsm_delta_norm
@@ -216,7 +219,7 @@ def main():
     OUTPUT_DIR = './output'
     LOG_DIR = './output/log'
     TENSORBOARD_DIR = './output/tensorboard'
-    CHECKPOINT_DIR = '../../../../scratch/pekang/checkpoint/'
+    CHECKPOINT_DIR = './output/checkpoint/'
     if not os.path.exists(OUTPUT_DIR):
         os.mkdir(OUTPUT_DIR)
     if not os.path.exists(LOG_DIR):
