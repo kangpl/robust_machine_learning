@@ -19,8 +19,15 @@ train_fgsm.py implements the FGSM adversarial training.
 * **boundary**: use FGSM with boundary initialization. For more details about this , you check section 5.1.2 in my [report](https://github.com/kangpl/robust_machine_learning/blob/master/report/Master%20Thesis_Understanding%20Catastrophic%20Overfitting%20in%20Adversarial%20Training_Peilin%20Kang.pdf)
 
 This command can reproduce catastrophic overfitting.
+
+Example 1 using multistep learning rate：
 ```
-python train_fgsm.py  --model PreActResNet18 --lr 0.1 --lr_schedule multistep --num_epochs 200 --epsilon 8 --random_start_type none --seed 0 --exp_name reporduce_co
+python train_fgsm.py  --model PreActResNet18 --lr 0.1 --lr_schedule multistep --num_epochs 200 --epsilon 8 --random_start_type none --seed 0 --exp_name reporduce_co1
+```
+
+Example 2 using cyclic learning rate:
+```
+python train_fgsm.py  --model PreActResNet18 --lr-min 0 --lr-max 0.3 --lr_schedule cyclic --num_epochs 30 --epsilon 8 --random_start_type none --seed 0 --exp_name reporduce_co2
 ```
 
 ## train_deepfool.py
