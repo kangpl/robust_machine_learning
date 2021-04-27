@@ -2,7 +2,7 @@
 
 This is for master thesis **Understanding Catastrophic Overfitting in Adversarial Training**
 
-# Environment
+## Environment
 
 This project is run on ETHz [Leonhard cluster](https://scicomp.ethz.ch/wiki/Leonhard) but you can also run on your own enviroment:
 * **start_jupyter_nb.sh** is taken from [ethz gitlab](https://gitlab.ethz.ch/sfux/Jupyter-on-Euler-or-Leonhard-Open) and used to start a jupyter notebook from a local computer on Euler/Leonhard Open 
@@ -10,7 +10,7 @@ This project is run on ETHz [Leonhard cluster](https://scicomp.ethz.ch/wiki/Leon
 
 If you do not use Leonhard cluster environment, you can ignore these two scripts.
 
-# train_fgsm.py
+## train_fgsm.py
 train_fgsm.py implements the FGSM adversarial training.
 
 --random_start_type is used to specify the random initialization type
@@ -23,7 +23,7 @@ This command can reproduce catastrophic overfitting.
 python train_fgsm.py  --model PreActResNet18 --lr 0.1 --lr_schedule multistep --num_epochs 200 --epsilon 8 --random_start_type none --seed 0 --exp_name reporduce_co
 ```
 
-# train_pgd.py
+## train_pgd.py
 train_pgd.py implements the PGD adversarial training.
 
 Example
@@ -31,7 +31,7 @@ Example
 python train_pgd.py --model PreActResNet18 --lr 0.1 --lr_schedule multistep --num_epochs 200 --epsilon 8 --train_pgd_ratio 0.2 --train_pgd_attack_iters 10 --train_pgd_restarts 1 --seed 0 --exp_name pgd
 ```
 
-# train_fgsm_grad_align.py
+## train_fgsm_grad_align.py
 train_fgsm_grad_align.py implements the FGSM with gradient alignment. For more details about gradient alignment, you can check this paper [Understanding and Improving Fast Adversarial Training](https://arxiv.org/abs/2007.02617)
 
 Example
