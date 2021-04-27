@@ -15,12 +15,20 @@ train_fgsm.py implements the FGSM adversarial training.
 
 --random_start_type is used to specify the random initialization type
 * **none**: use vanilla FGSM and do not have random initialization
-* **uniform**: use FGSM with unifrom initialzation. For more details, you can check this paper [Fast is better than free: Revisiting adversarial training]( https://arxiv.org/abs/2001.03994)
-* **boundary**: use FGSM with boundary initialization. For more details, you check section 5.1.2 in my [report](https://github.com/kangpl/robust_machine_learning/blob/master/report/Master%20Thesis_Understanding%20Catastrophic%20Overfitting%20in%20Adversarial%20Training_Peilin%20Kang.pdf)
+* **uniform**: use FGSM with unifrom initialzation. For more details about this, you can check paper [Fast is better than free: Revisiting adversarial training]( https://arxiv.org/abs/2001.03994)
+* **boundary**: use FGSM with boundary initialization. For more details about this , you check section 5.1.2 in my [report](https://github.com/kangpl/robust_machine_learning/blob/master/report/Master%20Thesis_Understanding%20Catastrophic%20Overfitting%20in%20Adversarial%20Training_Peilin%20Kang.pdf)
 
 This command can reproduce catastrophic overfitting.
 ```
 python train_fgsm.py  --model PreActResNet18 --lr 0.1 --lr_schedule multistep --num_epochs 200 --epsilon 8 --random_start_type none --seed 0 --exp_name reporduce_co
+```
+
+## train_deepfool.py
+train_deepfool.py implements the adversarial training with 1 iteration $l_{\infty}$ [DeepFool](https://arxiv.org/abs/1511.04599)
+
+Example
+```
+python train_deepfool.py  --model PreActResNet18 --lr 0.1 --lr_schedule multistep --num_epochs 200 --epsilon 8 --seed 0 --exp_name deepfool
 ```
 
 ## train_pgd.py
